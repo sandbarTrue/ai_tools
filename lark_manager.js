@@ -57,6 +57,77 @@ class LarkDocManager {
     }
 
     /**
+     * 读取文档纯文本（基于 blocks 列表拼接）
+     * @param {string} documentToken
+     */
+    async readDoc(documentToken) {
+        console.log(`正在读取文档: ${documentToken}`);
+        try {
+            const out = [];
+            let pageToken = undefined;
+            do {
+                const url = `${this.baseUrl}/docx/v1/documents/${documentToken}/blocks/${documentToken}/children`;
+                const resp = await axios.get(url, {
+                    headers: this.headers,
+                    params: {
+                        page_size: 500,
+                        page_token: pageToken
+                    }
+                });
+                const data = resp.data?.data;
+                const items = data?.items || [];
+                for (const b of items) {
+                    if (b?.text?.elements?.length) {
+                        const line = b.text.elements.map(e => e?.text_run?.content || '').join('');
+                        if (line) out.push(line);
+                    }
+                }
+                pageToken = data?.page_token;
+            } while (pageToken);
+            return out.join('\n');
+        } catch (error) {
+            console.error('读取文档失败:', error.response ? JSON.stringify(error.response.data, null, 2) : error.message);
+            throw error;
+        }
+    }
+
+    /**
+     * 编辑文档：为简单起见，这里提供“追加文本块/标题块”的编辑能力。
+     * （docx 更复杂的精确编辑，需要先定位 block_id 再 update）
+     * @param {string} documentToken
+     * @param {string} text
+     */
+    async appendText(documentToken, text) {
+        return this.appendBlocks(documentToken, [LarkDocManager.createTextBlock(text)]);
+    }
+
+    /**
+     * 授权用户对新建文档拥有管理权限（owner/editor）
+     * 需要在飞书开放平台为应用开通 docs:permission.member:create/update 等权限。
+     * @param {string} fileToken docx 的 document_id
+     * @param {string} openId 用户 open_id
+     * @param {string} role viewer|editor|owner（以实际 API 支持为准）
+     */
+    async grantDocPermission(fileToken, openId, role = 'owner') {
+        console.log(`正在授权文档权限: file=${fileToken}, openId=${openId}, role=${role}`);
+        try {
+            // 飞书“权限成员”接口属于 docs/drive 权限体系，不同版本接口略有差异。
+            // 这里先按 docs 权限成员创建的通用形态封装；如你的租户接口字段不同，我再按返回报错精准对齐。
+            const url = `${this.baseUrl}/drive/v2/permissions/${fileToken}/members`;
+            const body = {
+                member_type: 'openid',
+                member_id: openId,
+                perm: role
+            };
+            const resp = await axios.post(url, body, { headers: this.headers });
+            return resp.data;
+        } catch (error) {
+            console.error('授权失败:', error.response ? JSON.stringify(error.response.data, null, 2) : error.message);
+            throw error;
+        }
+    }
+
+    /**
      * 上传图片到飞书驱动
      * @param {string} filePath 本地文件路径
      * @param {string} parentNode 父节点Token (文档Token)
@@ -89,21 +160,6 @@ class LarkDocManager {
             return response.data.data.file_token;
         } catch (error) {
             console.error('上传图片失败:', error.response ? JSON.stringify(error.response.data, null, 2) : error.message);
-            throw error;
-        }
-    }
-
-    /**
-     * 读取文档内容
-     * @param {string} documentToken 文档Token
-     */
-    async getDocContent(documentToken) {
-        console.log(`正在读取文档内容: ${documentToken}`);
-        try {
-            const response = await axios.get(`${this.baseUrl}/docx/v1/documents/${documentToken}/blocks`, { headers: this.headers });
-            return response.data.data.items;
-        } catch (error) {
-            console.error('读取文档失败:', error.response ? JSON.stringify(error.response.data, null, 2) : error.message);
             throw error;
         }
     }
@@ -143,70 +199,6 @@ class LarkDocManager {
         } catch (error) {
             console.error('追加内容失败:', error.response ? JSON.stringify(error.response.data, null, 2) : error.message);
             throw error;
-        }
-    }
-
-    /**
-     * 在文档末尾追加文本 (使用 children.create 接口)
-     * @param {string} documentToken 文档Token
-     * @param {string} text 要追加的内容
-     */
-    async appendText(documentToken, text) {
-        console.log(`正在向文档追加内容: ${documentToken}`);
-        try {
-            // 在 Docx 中，文档根块 ID 通常与 documentToken 相同
-            const blockId = documentToken;
-            const data = {
-                children: [
-                    {
-                        block_type: 2, // Text Block
-                        text: {
-                            elements: [
-                                {
-                                    text_run: {
-                                        content: text
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                ]
-            };
-            
-            const response = await axios.post(
-                `${this.baseUrl}/docx/v1/documents/${documentToken}/blocks/${blockId}/children`,
-                data,
-                { headers: this.headers }
-            );
-            console.log('内容追加成功。');
-            return response.data.data;
-        } catch (error) {
-            console.error('追加内容失败:', error.response ? JSON.stringify(error.response.data, null, 2) : error.message);
-            throw error;
-        }
-    }
-
-    /**
-     * 添加文档权限
-     * @param {string} token 文档Token
-     * @param {string} memberId 用户ID (open_id)
-     * @param {string} perm 权限 (view/edit)
-     */
-    async addPermission(token, memberId, perm = 'view') {
-        console.log(`正在添加权限: doc=${token}, user=${memberId}, perm=${perm}`);
-        try {
-            const url = `${this.baseUrl}/drive/v1/permissions/${token}/members?type=docx`;
-            const data = {
-                member_type: 'openid',
-                member_id: memberId,
-                perm: perm
-            };
-            
-            await axios.post(url, data, { headers: this.headers });
-            console.log('权限添加成功。');
-        } catch (error) {
-            console.error('添加权限失败:', error.response ? JSON.stringify(error.response.data, null, 2) : error.message);
-            // Don't throw if already exists or other non-critical error, but logging is enough
         }
     }
 
@@ -291,22 +283,8 @@ class LarkDocManager {
 
 // 快速测试示例 & 搞钱设计文档生成器
 async function main() {
-    let APP_ID, APP_SECRET;
-    try {
-        const configPath = path.join(__dirname, 'config.json');
-        if (fs.existsSync(configPath)) {
-            const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-            APP_ID = config.LARK_APP_ID;
-            APP_SECRET = config.LARK_APP_SECRET;
-        } else {
-             // Fallback or error if config doesn't exist
-             console.error("Config file not found!");
-             process.exit(1);
-        }
-    } catch (error) {
-        console.error("Failed to read config:", error);
-        process.exit(1);
-    }
+    const APP_ID = process.env.FEISHU_APP_ID;
+    const APP_SECRET = process.env.FEISHU_APP_SECRET;
 
     const manager = new LarkDocManager(APP_ID, APP_SECRET);
 
@@ -358,12 +336,6 @@ async function main() {
         // 2. 生成并上传图片 (Architecture & Sequence)
         const archPath = '/root/.openclaw/workspace/arch_diagram.png';
         const seqPath = '/root/.openclaw/workspace/seq_diagram.png';
-
-        // Ensure directory exists
-        const dir = path.dirname(archPath);
-        if (!fs.existsSync(dir)){
-            fs.mkdirSync(dir, { recursive: true });
-        }
 
         await manager.downloadMermaidImage(architectureDiagram, archPath);
         await manager.downloadMermaidImage(sequenceDiagram, seqPath);
