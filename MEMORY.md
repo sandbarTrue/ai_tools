@@ -18,3 +18,5 @@
 - **理解偏差**："root 账号管理"指用 root 权限访问 zhoujun.sandbar 的资源，不是用 root 用户执行操作。
 - **主动调查原则**：从错误信息中提取线索（如 "Permission denied" = SSH 问题），不要盲目尝试其他方案。
 - **Git 工作流**：已验证 `/root/wali_memory` 作为主要记忆仓库，路径：`git@github.com:sandbarTrue/wali-memory.git`。
+- **Headless 浏览器限制**：无头模式下的浏览器下载功能受限，直接生成 0 字节文件。
+- **CDN 访问限制**：飞书依赖字节跳动内部 CDN（sf3-cn-cdn-tos.pstatp.com），字节跳动内网环境可能无法直接访问外网 CDN。
