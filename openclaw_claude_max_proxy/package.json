@@ -1,0 +1,11 @@
+{
+  "name": "openclaw-claude-max-proxy",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Local Anthropic OAuth proxy + OpenClaw config helpers (Claude Max)",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "https-proxy-agent": "^7.0.6"
+  }
+}
+
