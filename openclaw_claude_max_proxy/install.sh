@@ -27,7 +27,7 @@ OK: 安装完成。
 
 下一步：
   1) export ANTHROPIC_OAUTH_TOKEN="..."   # Claude Max OAuth token
-  2) bash ./start.sh
+  2) 一键启动：bash ./bootstrap.sh
+     或仅启动 proxy：bash ./start.sh
 
 EOF
-
