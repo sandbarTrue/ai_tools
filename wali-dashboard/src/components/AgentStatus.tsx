@@ -93,6 +93,45 @@ function extractModel(executor?: string): string {
   return '';
 }
 
+// 格式化操作文本，返回高亮样式的 JSX
+function formatActionText(action: string): React.ReactNode {
+  if (!action) return null;
+
+  // 如果以 $ 开头（命令），用等宽字体和绿色
+  if (action.startsWith('$')) {
+    return <span className="font-mono text-green-400">{action}</span>;
+  }
+
+  // 如果是文件操作（编辑/写入/读取开头），高亮文件名
+  const fileOps = ['编辑', '写入', '读取'];
+  for (const op of fileOps) {
+    if (action.startsWith(op)) {
+      const rest = action.slice(op.length);
+      // 尝试提取文件名（通常是引号内的内容或空格后的内容）
+      const match = rest.match(/^[\s:"]*([^\s"]+)[\s"]*(.*)$/);
+      if (match) {
+        const [, filename, suffix] = match;
+        return (
+          <>
+            <span className="text-gray-400">{op}</span>
+            <span className="text-blue-400">{filename}</span>
+            {suffix && <span className="text-gray-400">{suffix}</span>}
+          </>
+        );
+      }
+      return (
+        <>
+          <span className="text-gray-400">{op}</span>
+          <span className="text-blue-400">{rest}</span>
+        </>
+      );
+    }
+  }
+
+  // 其他操作保持灰色
+  return <span className="text-gray-300">{action}</span>;
+}
+
 export default function AgentStatus({ stats, isLive }: AgentStatusProps) {
   const [now, setNow] = useState(() => Date.now());
 
@@ -283,8 +322,8 @@ export default function AgentStatus({ stats, isLive }: AgentStatusProps) {
                         <span className="text-[10px] text-gray-500 font-mono w-10 shrink-0">
                           {action.time}
                         </span>
-                        <span className="text-gray-300 truncate flex-1">
-                          {action.action}
+                        <span className="truncate flex-1">
+                          {formatActionText(action.action)}
                         </span>
                         {action.executor && (
                           <span className="text-[10px] text-purple-300 bg-purple-500/10 px-1.5 py-0.5 rounded shrink-0">
