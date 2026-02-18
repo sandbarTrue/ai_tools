@@ -5,7 +5,7 @@ import ModelTag from '@/components/ModelTag';
 import StatusDot from '@/components/StatusDot';
 import { Task, TaskStatus } from '@/types';
 import { defaultTasks } from '@/data/tasks';
-import { fetchStats, StatsData, ActiveTask, ClaudeCodeData, LiveSession, TaskProgress } from '@/lib/api';
+import { fetchStats, StatsData, ActiveTask, ClaudeCodeData, LiveSession, TaskProgress, OpenSpecHistory } from '@/lib/api';
 
 function formatTokens(n: number): string {
   if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
@@ -90,6 +90,103 @@ function formatLastActive(minutes: number): string {
   if (hrs < 24) return `${hrs} 小时前`;
   const days = Math.floor(hrs / 24);
   return `${days} 天前`;
+}
+
+// OpenSpec 历史记录组件
+function OpenSpecHistorySection({ history }: { history: OpenSpecHistory[] }) {
+  const [expandedChanges, setExpandedChanges] = useState<Set<string>>(new Set());
+
+  const toggleChange = (change: string) => {
+    setExpandedChanges(prev => {
+      const next = new Set(prev);
+      if (next.has(change)) {
+        next.delete(change);
+      } else {
+        next.add(change);
+      }
+      return next;
+    });
+  };
+
+  const getStatusStyle = (status: string) => {
+    switch (status) {
+      case 'success':
+        return { dot: 'bg-green-400', badge: 'bg-green-500/15 text-green-400 border-green-500/30', label: '成功' };
+      case 'failed':
+        return { dot: 'bg-red-400', badge: 'bg-red-500/15 text-red-400 border-red-500/30', label: '失败' };
+      case 'in_progress':
+        return { dot: 'bg-yellow-400 animate-pulse', badge: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30', label: '进行中' };
+      default:
+        return { dot: 'bg-gray-400', badge: 'bg-gray-500/15 text-gray-400 border-gray-500/30', label: '未知' };
+    }
+  };
+
+  return (
+    <div className="bg-[#0d1117] rounded-xl border border-[#30363d] overflow-hidden">
+      <div className="px-4 py-3 border-b border-[#21262d] flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span>📦</span>
+          <span className="font-semibold text-white text-sm">OpenSpec 任务记录</span>
+          <span className="bg-cyan-500/15 text-cyan-400 text-xs font-medium px-2 py-0.5 rounded-full">
+            {history.length} 个
+          </span>
+        </div>
+      </div>
+      <div className="p-4">
+        {history.length > 0 ? (
+          <div className="space-y-2">
+            {history.map((record, idx) => {
+              const isExpanded = expandedChanges.has(record.change);
+              const statusInfo = getStatusStyle(record.status);
+              return (
+                <div key={idx} className="bg-[#161b22] rounded-lg border border-[#21262d] overflow-hidden">
+                  {/* 记录头 */}
+                  <div
+                    className="flex items-center gap-3 p-3 cursor-pointer hover:bg-[#1c2128] transition-colors"
+                    onClick={() => toggleChange(record.change)}
+                  >
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${statusInfo.dot}`} />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs text-white font-medium truncate">{record.change}</div>
+                      <div className="text-[10px] text-[#6e7681] mt-0.5 flex items-center gap-2">
+                        <span className="text-green-400">{record.completed}/{record.total} 任务</span>
+                        {record.duration && <span>· {record.duration}</span>}
+                        {record.cost && <span className="text-purple-400">· {record.cost}</span>}
+                      </div>
+                    </div>
+                    <span className={`text-[10px] px-2 py-0.5 rounded border ${statusInfo.badge}`}>
+                      {statusInfo.label}
+                    </span>
+                    <span className="text-[#484f58] text-xs">{isExpanded ? '▲' : '▼'}</span>
+                  </div>
+
+                  {/* 展开的任务列表 */}
+                  {isExpanded && record.tasks && (
+                    <div className="border-t border-[#21262d] p-2 space-y-1">
+                      {record.tasks.map((task, tIdx) => (
+                        <div key={tIdx} className="flex items-center gap-2 text-[11px] p-2 bg-[#0d1117] rounded">
+                          <span className={task.done ? 'text-green-400' : 'text-[#484f58]'}>
+                            {task.done ? '☑' : '☐'}
+                          </span>
+                          <span className={task.done ? 'text-[#8b949e] line-through' : 'text-white'}>
+                            {task.title}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="text-center py-8 text-[#6e7681] text-sm">
+            暂无 OpenSpec 记录
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function truncateAction(action: string, maxLen: number = 50): string {
@@ -304,6 +401,7 @@ export default function TasksPage() {
   const sessions = claudeCode?.sessions || [];
   const liveSessions: LiveSession[] = stats?.live_sessions || [];
   const taskProgress: TaskProgress | undefined = (stats as any)?.wali_status?.taskProgress || stats?.task_progress;
+  const openspecHistory: OpenSpecHistory[] = stats?.openspec_history || [];
 
   const renderTaskCard = (task: Task) => {
     const isExpanded = expandedId === task.id;
@@ -635,6 +733,11 @@ export default function TasksPage() {
             )}
           </div>
         </div>
+      )}
+
+      {/* OpenSpec 任务记录 */}
+      {openspecHistory.length > 0 && (
+        <OpenSpecHistorySection history={openspecHistory} />
       )}
 
       {/* Screen 进程 */}

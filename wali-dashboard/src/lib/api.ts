@@ -85,6 +85,22 @@ export interface StatsData {
   active_tasks?: ActiveTask[];
   live_sessions?: LiveSession[];
   task_progress?: TaskProgress;
+  openspec_history?: OpenSpecHistory[];
+}
+
+export interface OpenSpecHistory {
+  change: string;
+  completed: number;
+  total: number;
+  duration?: string;
+  cost?: string;
+  status: 'success' | 'failed' | 'in_progress';
+  tasks?: OpenSpecTask[];
+}
+
+export interface OpenSpecTask {
+  title: string;
+  done: boolean;
 }
 
 export interface LiveSession {
