@@ -98,6 +98,162 @@ function truncateAction(action: string, maxLen: number = 50): string {
   return action.slice(0, maxLen) + '...';
 }
 
+// Claude Code Session 分组组件
+interface ClaudeSession {
+  id: string;
+  cwd: string;
+  started: string;
+  ended: string | null;
+  tools: number;
+  failures: number;
+}
+
+function ClaudeCodeSessionsGrouped({
+  sessions,
+  totalEvents,
+  now
+}: {
+  sessions: ClaudeSession[];
+  totalEvents: number;
+  now: number;
+}) {
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+
+  // 按 cwd 分组
+  const groupedSessions = sessions.reduce((acc, session) => {
+    const key = session.cwd;
+    if (!acc[key]) {
+      acc[key] = [];
+    }
+    acc[key].push(session);
+    return acc;
+  }, {} as Record<string, ClaudeSession[]>);
+
+  const groupEntries = Object.entries(groupedSessions);
+  // 按最后一次执行时间排序
+  groupEntries.sort((a, b) => {
+    const lastA = a[1][a[1].length - 1]?.started || '';
+    const lastB = b[1][b[1].length - 1]?.started || '';
+    return new Date(lastB).getTime() - new Date(lastA).getTime();
+  });
+
+  const toggleGroup = (cwd: string) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(cwd)) {
+        next.delete(cwd);
+      } else {
+        next.add(cwd);
+      }
+      return next;
+    });
+  };
+
+  return (
+    <div className="bg-[#0d1117] rounded-xl border border-[#30363d] overflow-hidden">
+      <div className="px-4 py-3 border-b border-[#21262d] flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span>💻</span>
+          <span className="font-semibold text-white text-sm">Claude Code Session</span>
+          <span className="bg-purple-500/15 text-purple-400 text-xs font-medium px-2 py-0.5 rounded-full">
+            {groupEntries.length} 项目
+          </span>
+          <span className="text-[10px] text-[#6e7681]">
+            ({sessions.length} 次执行)
+          </span>
+        </div>
+        <span className="text-xs text-[#6e7681]">
+          共 {totalEvents} 事件
+        </span>
+      </div>
+      <div className="p-4">
+        {groupEntries.length > 0 ? (
+          <div className="space-y-2 max-h-80 overflow-y-auto">
+            {groupEntries.slice(0, 15).map(([cwd, groupSessions]) => {
+              const isExpanded = expandedGroups.has(cwd);
+              const sessionType = getSessionTypeLabel(cwd);
+              const lastSession = groupSessions[groupSessions.length - 1];
+              const totalTools = groupSessions.reduce((s, ses) => s + ses.tools, 0);
+              const totalFailures = groupSessions.reduce((s, ses) => s + ses.failures, 0);
+              const hasRunning = groupSessions.some(s => !s.ended);
+
+              return (
+                <div key={cwd} className="bg-[#161b22] rounded-lg border border-[#21262d] overflow-hidden">
+                  {/* 分组头 */}
+                  <div
+                    className="flex items-center gap-3 p-3 cursor-pointer hover:bg-[#1c2128] transition-colors"
+                    onClick={() => toggleGroup(cwd)}
+                  >
+                    <span className={`text-[10px] px-2 py-0.5 rounded border ${sessionType.color}`}>
+                      {sessionType.label}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs text-[#8b949e] truncate font-mono" title={cwd}>
+                        {cwd.split('/').slice(-2).join('/')}
+                      </div>
+                      <div className="text-[10px] text-[#6e7681] mt-0.5 flex items-center gap-2">
+                        <span className="text-purple-400 font-medium">{groupSessions.length} 次执行</span>
+                        {lastSession.started && (
+                          <span>最后 {formatTimeAgo(lastSession.started, now)}</span>
+                        )}
+                        <span>· {totalTools} 工具</span>
+                        {totalFailures > 0 && (
+                          <span className="text-red-400">· {totalFailures} 失败</span>
+                        )}
+                      </div>
+                    </div>
+                    {hasRunning && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-500/15 text-green-400 border border-green-500/30">
+                        运行中
+                      </span>
+                    )}
+                    <span className="text-[#484f58] text-xs">{isExpanded ? '▲' : '▼'}</span>
+                  </div>
+
+                  {/* 展开的详情 */}
+                  {isExpanded && (
+                    <div className="border-t border-[#21262d] p-2 space-y-1.5">
+                      {groupSessions.map((session, idx) => (
+                        <div key={session.id || idx} className="flex items-center gap-2 text-[11px] p-2 bg-[#0d1117] rounded">
+                          <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: session.ended ? '#22c55e' : '#22c55e' }} />
+                          <span className="text-[#6e7681] font-mono w-16 shrink-0">
+                            {session.started ? new Date(session.started).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '—'}
+                          </span>
+                          <span className="text-[#8b949e] flex-1">
+                            {session.tools} 工具
+                            {session.failures > 0 && <span className="text-red-400 ml-1">· {session.failures} 失败</span>}
+                          </span>
+                          {!session.ended && (
+                            <span className="text-green-400">运行中</span>
+                          )}
+                          {session.ended && (
+                            <span className="text-[#484f58]">
+                              结束 {new Date(session.ended).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {groupEntries.length > 15 && (
+              <div className="text-[10px] text-[#6e7681] text-center py-2">
+                还有 {groupEntries.length - 15} 个项目
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="text-center py-8 text-[#6e7681] text-sm">
+            暂无 Session 记录
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function TasksPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'board' | 'list'>('board');
@@ -497,57 +653,13 @@ export default function TasksPage() {
         </div>
       </div>
 
-      {/* Claude Code Session 历史 */}
+      {/* Claude Code Session 历史 - 分组显示 */}
       {claudeCode && (
-        <div className="bg-[#0d1117] rounded-xl border border-[#30363d] overflow-hidden">
-          <div className="px-4 py-3 border-b border-[#21262d] flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span>💻</span>
-              <span className="font-semibold text-white text-sm">Claude Code Session</span>
-              <span className="bg-purple-500/15 text-purple-400 text-xs font-medium px-2 py-0.5 rounded-full">
-                {sessions.length} 个
-              </span>
-            </div>
-            <span className="text-xs text-[#6e7681]">
-              共 {claudeCode.total_events} 事件
-            </span>
-          </div>
-          <div className="p-4">
-            {sessions.length > 0 ? (
-              <div className="space-y-2 max-h-80 overflow-y-auto">
-                {sessions.slice(0, 10).map((session, idx) => {
-                  const sessionType = getSessionTypeLabel(session.cwd);
-                  return (
-                    <div key={session.id || idx} className="flex items-center gap-3 p-3 bg-[#161b22] rounded-lg border border-[#21262d]">
-                      <span className={`text-[10px] px-2 py-0.5 rounded border ${sessionType.color}`}>
-                        {sessionType.label}
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-xs text-[#8b949e] truncate font-mono" title={session.cwd}>
-                          {session.cwd.split('/').slice(-2).join('/')}
-                        </div>
-                        <div className="text-[10px] text-[#6e7681] mt-0.5">
-                          {session.started && formatTimeAgo(session.started, now)} · {session.tools} 工具
-                          {session.failures > 0 && <span className="text-red-400 ml-1">· {session.failures} 失败</span>}
-                        </div>
-                      </div>
-                      <StatusDot status={session.ended ? 'healthy' : 'healthy'} size="sm" />
-                    </div>
-                  );
-                })}
-                {sessions.length > 10 && (
-                  <div className="text-[10px] text-[#6e7681] text-center py-2">
-                    还有 {sessions.length - 10} 个更早的 session
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="text-center py-8 text-[#6e7681] text-sm">
-                暂无 Session 记录
-              </div>
-            )}
-          </div>
-        </div>
+        <ClaudeCodeSessionsGrouped
+          sessions={sessions}
+          totalEvents={claudeCode.total_events}
+          now={now}
+        />
       )}
 
       {/* 待办队列 */}
