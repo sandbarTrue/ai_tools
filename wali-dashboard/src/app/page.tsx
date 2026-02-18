@@ -13,6 +13,7 @@ import { defaultTasks } from '@/data/tasks';
 import { fetchStats, StatsData } from '@/lib/api';
 import { transformModels, transformBrainStatus, getTopModels } from '@/lib/transform';
 import { ModelInfo, BrainStatus } from '@/types';
+import ActiveTasksCard from '@/components/ActiveTasksCard';
 
 function formatTokens(n: number): string {
   if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
@@ -112,7 +113,7 @@ export default function Dashboard() {
       setLoading(false);
     }
     load();
-    const interval = setInterval(load, 5 * 60 * 1000);
+    const interval = setInterval(load, 30_000);
     return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
@@ -129,11 +130,11 @@ export default function Dashboard() {
   // Get merged models from stats (if available)
   const mergedModels: ModelInfo[] = isLive && stats && (stats as any).merged_models
     ? (stats as any).merged_models.map((m: any) => ({
-        name: m.name,
+        name: m.displayName || m.name || m.id,
         status: 'healthy' as const,
-        tokensUsedToday: m.today?.input_tokens + m.today?.output_tokens || 0,
-        tokensUsedWeek: m.week?.input_tokens + m.week?.output_tokens || 0,
-        tokensUsedMonth: m.month?.input_tokens + m.month?.output_tokens || 0,
+        tokensUsedToday: (m.today?.input_tokens || 0) + (m.today?.output_tokens || 0),
+        tokensUsedWeek: (m.week?.input_tokens || 0) + (m.week?.output_tokens || 0),
+        tokensUsedMonth: (m.month?.input_tokens || 0) + (m.month?.output_tokens || 0),
         avgResponseTime: 0,
         successRate: 100,
         color: m.color || '#6366f1',
@@ -216,6 +217,9 @@ export default function Dashboard() {
     <div className="space-y-8">
       {/* Agent Status - using new component */}
       <AgentStatus stats={stats} isLive={isLive} />
+
+      {/* Active Tasks Card - 活跃任务快览 */}
+      <ActiveTasksCard stats={stats} isLive={isLive} />
 
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
