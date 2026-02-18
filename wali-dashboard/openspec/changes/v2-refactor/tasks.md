@@ -74,3 +74,14 @@
 - [x] Task 12: 重构 src/app/models/page.tsx 模型监控页
   - 顶部用 ModelRanking 组件（合并后数据）
   - 下方保留按供应商分组（用 raw_models 数据）
+
+## ⚠️ 验证清单（每次部署前必做）
+
+- [ ] 本地 `npm run build` 通过（类型检查+编译）
+- [ ] 数据兼容性：用 node 脚本模拟前端读取 stats.json，验证：
+  - merged_models 是 array 不是 object
+  - 字段名一致（displayName vs name）
+  - 数值字段不是 undefined/NaN（用 `|| 0` 保护）
+- [ ] 新组件 import 的模块都存在
+- [ ] 改了 collector 输出格式时，前端必须同步更新
+- [ ] 部署后 30 秒内打开 https://wali-dashboard.vercel.app 验证不崩
