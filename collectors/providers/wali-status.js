@@ -488,16 +488,28 @@ const waliStatusProvider = {
       '备婚': ['wedding-planner', 'wedding'],
       'openspec': ['openspec-bg', 'openspec'],
       '飞书': ['feishu', 'lark'],
+      '搬迁': ['migration', 'export', 'import'],
+      '数据管道': ['collector', 'stats-pusher', 'push'],
     };
     if (tasks && tasks.tasks && executions.length > 0) {
       for (const task of tasks.tasks) {
         const taskTitle = task.title.toLowerCase();
-        // 提取关键词
-        const keywords = taskTitle
+        // 提取关键词：按空格分词 + 中文双字切片
+        const words = taskTitle
           .replace(/[v\d.]+/g, '')
           .split(/[\s,，、]+/)
-          .filter(w => w.length >= 2)
-          .slice(0, 4);
+          .filter(w => w.length >= 2);
+        // 对中文词再拆成 2 字子串（如 "搬迁系统" → ["搬迁", "系统"]）
+        const keywords = [];
+        for (const w of words) {
+          if (/[\u4e00-\u9fff]/.test(w) && w.length > 2) {
+            for (let i = 0; i <= w.length - 2; i += 2) {
+              keywords.push(w.slice(i, i + 2));
+            }
+          } else {
+            keywords.push(w);
+          }
+        };
 
         // 找到 task 关联的 project 名
         const relatedProjects = [];

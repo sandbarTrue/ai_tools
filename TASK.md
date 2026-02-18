@@ -17,6 +17,15 @@
 ## [活跃] 搬迁系统
 - 来源: 搞钱大王 02-18
 - 目标: 实现一键搬迁到新机器/新飞书机器人，所有依赖 GitHub 管理
+### 执行记录
+- [x] Phase 1: 依赖盘点 | 工具: Opus 手动 | 5 skills, collectors, openspec-bg, memory, config 等
+- [x] Phase 1: 字节内部分支 | 工具: Opus 手动 | ai_magic → feat/wali-migration 分支
+- [x] Phase 1: GitHub Skills 同步 | 工具: Opus 手动 | openclaw-skills 5 个 skill 已脱敏推送
+- [x] Phase 1: Workspace 全量备份 | 工具: Opus 手动 | ai_tools → wali-workspace 分支 49 文件
+- [x] Phase 1: .gitignore + 敏感信息脱敏 | 工具: Opus 手动 | 排除密钥/临时文件
+- [x] Phase 2: 搬迁脚本 3 件套 | 工具: Claude Code + GLM-5 | export.sh(168行) + import.sh(267行) + switch-feishu.sh(212行)
+- [x] Phase 2: export.sh 验证通过 | 工具: Opus 手动 | 11KB 加密包，10 个文件，MD5 校验
+- [ ] Phase 3: 看板搬迁页面 | 工具: 待派发 Claude Code | 搬迁状态可视化
 
 ## [活跃] 飞书 API 优化
 - 来源: 搞钱大王 02-18
