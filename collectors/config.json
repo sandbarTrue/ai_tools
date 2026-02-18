@@ -1,0 +1,153 @@
+{
+  "paths": {
+    "sessionsDir": "/root/.openclaw/agents/main/sessions",
+    "claudeCodeStats": "/tmp/wali-claude-code-stats.jsonl",
+    "scanStateFile": "/tmp/wali-scan-state.json",
+    "outputFile": "/tmp/wali-stats.json",
+    "brainStatusUrl": "http://127.0.0.1:8089/brain-status",
+    "openspecBgLogsDir": "/tmp/openspec-bg-logs",
+    "claudeCodeProjectsDir": "/home/zhoujun.sandbar/.claude/projects",
+    "zhipuQuotaFile": "/tmp/wali-zhipu-quota.json",
+    "claudeQuotaFile": "/tmp/wali-claude-quota.json",
+    "waliStatusFile": "/tmp/wali-status.json"
+  },
+  "push": {
+    "enabled": true,
+    "url": "https://junaitools.com/wali-api/push.php",
+    "token": "wali-push-2026"
+  },
+  "scp": {
+    "enabled": false,
+    "host": "66.29.148.38",
+    "port": 21098,
+    "user": "ztshkzhkyl",
+    "keyFile": "/root/.ssh/spaceship_rsa",
+    "remotePath": "~/junaitools.com/wali-api/stats.json"
+  },
+  "modelGroups": [
+    {
+      "id": "claude-opus-4-6",
+      "displayName": "Claude Opus 4.6",
+      "vendor": "Anthropic",
+      "keys": [
+        "anthropic-oauth-proxy/claude-opus-4-6",
+        "anthropic/claude-opus-4-6",
+        "claude-code/claude-opus-4-6"
+      ],
+      "costPer1k": {
+        "input": 0.015,
+        "output": 0.075
+      }
+    },
+    {
+      "id": "glm-series",
+      "displayName": "GLM \u7cfb\u5217",
+      "vendor": "\u667a\u8c31 AI",
+      "keys": [
+        "claude-code/GLM-5",
+        "claude-code/glm-5",
+        "zhipu/glm-4.7",
+        "zhipu/glm-5"
+      ],
+      "costPer1k": {
+        "input": 0,
+        "output": 0
+      }
+    },
+    {
+      "id": "minimax-m25",
+      "displayName": "MiniMax M2.5",
+      "vendor": "MiniMax",
+      "keys": [
+        "coco-proxy/coco"
+      ],
+      "costPer1k": {
+        "input": 0,
+        "output": 0
+      }
+    },
+    {
+      "id": "byteagent-proxy",
+      "displayName": "\u5b57\u8282\u5185\u90e8\u4ee3\u7406",
+      "vendor": "ByteDance",
+      "keys": [
+        "ai-agent-proxy-responses/*",
+        "ai-agent-proxy-google/*"
+      ],
+      "costPer1k": {
+        "input": 0,
+        "output": 0
+      }
+    },
+    {
+      "id": "claude-haiku-cc",
+      "displayName": "Claude Haiku (via CC)",
+      "vendor": "Anthropic",
+      "keys": [
+        "claude-code/claude-haiku-3",
+        "claude-code/claude-haiku-3-5",
+        "claude-code/claude-haiku-4-5-20251001"
+      ],
+      "costPer1k": {
+        "input": 0.001,
+        "output": 0.005
+      }
+    },
+    {
+      "id": "openclaw-internal",
+      "displayName": "OpenClaw \u5185\u90e8",
+      "vendor": "OpenClaw",
+      "keys": [
+        "openclaw/delivery-mirror"
+      ],
+      "costPer1k": {
+        "input": 0,
+        "output": 0
+      }
+    }
+  ],
+  "costRates": {
+    "anthropic-oauth-proxy/claude-opus-4-6": {
+      "input": 0.015,
+      "output": 0.075
+    },
+    "anthropic/claude-opus-4-6": {
+      "input": 0.015,
+      "output": 0.075
+    },
+    "coco-proxy/coco": {
+      "input": 0,
+      "output": 0
+    },
+    "zhipu/glm-4.7": {
+      "input": 0,
+      "output": 0
+    },
+    "zhipu/glm-4-flash": {
+      "input": 0,
+      "output": 0
+    },
+    "zhipu/glm-4-flash-250414": {
+      "input": 0,
+      "output": 0
+    },
+    "minimax/minimax-m1": {
+      "input": 0,
+      "output": 0
+    }
+  },
+  "screenTasks": {
+    "prefixes": [
+      "openspec-",
+      "direct-"
+    ],
+    "staleThresholdMinutes": 5
+  },
+  "providers": {
+    "enabled": [
+      "openclaw-sessions",
+      "claude-code",
+      "screen-tasks"
+    ]
+  }
+}

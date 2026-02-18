@@ -1,0 +1,29 @@
+# Temp & cache
+.cache/
+__pycache__/
+node_modules/
+*.log
+*.pid
+
+# Generated images
+*.png
+*.svg
+
+# Temp HTML diagrams
+*.html
+
+# MCP env
+.env.mcp
+
+# Large binaries
+xiaohongshu-mcp-*
+
+# Temp scripts (one-off)
+browser_use_runner.js
+check-*.cjs
+check-*.js
+coco-spec-bridge.js
+zhipu-scraper.js
+
+# Sensitive config (secrets)
+.openspec-config

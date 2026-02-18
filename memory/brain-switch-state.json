@@ -1,0 +1,15 @@
+{
+  "currentBrain": "primary",
+  "lastSwitchTime": 1771254240418,
+  "primaryRateLimitedAt": 1771253934986,
+  "backupRateLimitedAt": 0,
+  "requestCount": {
+    "primary": 2,
+    "backup": 39
+  },
+  "errorCount": {
+    "primary": 2,
+    "backup": 0
+  },
+  "updatedAt": "2026-02-16T15:04:00.418Z"
+}
