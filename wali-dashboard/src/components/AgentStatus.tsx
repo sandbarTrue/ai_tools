@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import StatusDot from '@/components/StatusDot';
 import { StatsData, WaliStatusData, TaskProgress } from '@/lib/api';
 
@@ -254,8 +255,16 @@ export default function AgentStatus({ stats, isLive }: AgentStatusProps) {
                           style={{ width: `${taskProgress.percentage}%` }}
                         />
                       </div>
-                      <div className="text-[11px] text-gray-400 text-center">
-                        已完成 <span className="text-white font-medium">{taskProgress.completed}</span> / {taskProgress.total}
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] text-gray-400">
+                          已完成 <span className="text-white font-medium">{taskProgress.completed}</span> / {taskProgress.total}
+                        </span>
+                        <Link
+                          href="/dashboard/tasks/"
+                          className="text-[11px] text-blue-400 hover:text-blue-300 transition-colors"
+                        >
+                          查看详情 →
+                        </Link>
                       </div>
                     </div>
                   </div>
