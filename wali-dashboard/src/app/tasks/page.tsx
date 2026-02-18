@@ -515,7 +515,8 @@ export default function TasksPage() {
               </span>
             </div>
           </div>
-          <div className="overflow-x-auto">
+          {/* 桌面端表格视图 */}
+          <div className="hidden sm:block overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-[#6e7681] border-b border-[#21262d]">
@@ -560,6 +561,30 @@ export default function TasksPage() {
                 })}
               </tbody>
             </table>
+          </div>
+          {/* 移动端卡片视图 */}
+          <div className="sm:hidden p-3 space-y-2">
+            {liveSessions.map((session, idx) => {
+              const statusInfo = getLiveSessionStatusDot(session.status);
+              return (
+                <div key={session.id || idx} className="p-3 bg-[#161b22] rounded-lg border border-[#21262d]">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className={`text-[10px] px-2 py-0.5 rounded border ${getLiveSessionKindStyle(session.kind)}`}>
+                      {session.kind}
+                    </span>
+                    <span className="text-white font-medium text-xs truncate flex-1">{session.label}</span>
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${statusInfo.color}`} />
+                  </div>
+                  <div className="text-[11px] text-[#8b949e] mb-1 truncate" title={session.lastAction}>
+                    {truncateAction(session.lastAction || '', 40)}
+                  </div>
+                  <div className="flex items-center justify-between text-[10px] text-[#6e7681]">
+                    <span>{session.executor || '—'}</span>
+                    <span>{formatLastActive(session.lastActiveMinutes)}</span>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
