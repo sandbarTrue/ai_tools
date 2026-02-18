@@ -5,7 +5,7 @@ import ModelTag from '@/components/ModelTag';
 import StatusDot from '@/components/StatusDot';
 import { Task, TaskStatus } from '@/types';
 import { defaultTasks } from '@/data/tasks';
-import { fetchStats, StatsData, ActiveTask, ClaudeCodeData } from '@/lib/api';
+import { fetchStats, StatsData, ActiveTask, ClaudeCodeData, LiveSession, TaskProgress } from '@/lib/api';
 
 function formatTokens(n: number): string {
   if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
@@ -64,6 +64,40 @@ function getSessionTypeLabel(cwd: string): { label: string; color: string } {
   return { label: 'main', color: 'bg-green-500/15 text-green-400 border-green-500/30' };
 }
 
+// Live session helpers
+function getLiveSessionKindStyle(kind: string): string {
+  switch (kind) {
+    case 'main': return 'bg-purple-500/15 text-purple-400 border-purple-500/30';
+    case 'group': return 'bg-blue-500/15 text-blue-400 border-blue-500/30';
+    case 'subagent': return 'bg-green-500/15 text-green-400 border-green-500/30';
+    default: return 'bg-gray-500/15 text-gray-400 border-gray-500/30';
+  }
+}
+
+function getLiveSessionStatusDot(status: string): { color: string; label: string } {
+  switch (status) {
+    case 'active': return { color: 'bg-green-400', label: '活跃' };
+    case 'recent': return { color: 'bg-yellow-400', label: '近期' };
+    case 'idle': return { color: 'bg-gray-400', label: '空闲' };
+    default: return { color: 'bg-gray-400', label: '未知' };
+  }
+}
+
+function formatLastActive(minutes: number): string {
+  if (minutes < 1) return '刚刚';
+  if (minutes < 60) return `${minutes} 分钟前`;
+  const hrs = Math.floor(minutes / 60);
+  if (hrs < 24) return `${hrs} 小时前`;
+  const days = Math.floor(hrs / 24);
+  return `${days} 天前`;
+}
+
+function truncateAction(action: string, maxLen: number = 50): string {
+  if (!action) return '—';
+  if (action.length <= maxLen) return action;
+  return action.slice(0, maxLen) + '...';
+}
+
 export default function TasksPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'board' | 'list'>('board');
@@ -112,6 +146,8 @@ export default function TasksPage() {
   const waliQueue = stats?.wali_status?.queue || [];
   const claudeCode = stats?.claude_code;
   const sessions = claudeCode?.sessions || [];
+  const liveSessions: LiveSession[] = stats?.live_sessions || [];
+  const taskProgress: TaskProgress | undefined = (stats as any)?.wali_status?.taskProgress || stats?.task_progress;
 
   const renderTaskCard = (task: Task) => {
     const isExpanded = expandedId === task.id;
@@ -311,6 +347,115 @@ export default function TasksPage() {
   // 实时 tab 内容
   const renderRealtimeContent = () => (
     <div className="space-y-6">
+      {/* 活跃 Session 列表 */}
+      {liveSessions.length > 0 && (
+        <div className="bg-[#0d1117] rounded-xl border border-[#30363d] overflow-hidden">
+          <div className="px-4 py-3 border-b border-[#21262d] flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span>💬</span>
+              <span className="font-semibold text-white text-sm">活跃 Session</span>
+              <span className="bg-cyan-500/15 text-cyan-400 text-xs font-medium px-2 py-0.5 rounded-full">
+                {liveSessions.length} 个
+              </span>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-[#6e7681] border-b border-[#21262d]">
+                  <th className="text-left py-2 px-4 font-medium">Label</th>
+                  <th className="text-left py-2 px-4 font-medium">Kind</th>
+                  <th className="text-left py-2 px-4 font-medium">Executor</th>
+                  <th className="text-left py-2 px-4 font-medium">Last Action</th>
+                  <th className="text-center py-2 px-4 font-medium">Status</th>
+                  <th className="text-right py-2 px-4 font-medium">活跃时间</th>
+                </tr>
+              </thead>
+              <tbody>
+                {liveSessions.map((session, idx) => {
+                  const statusInfo = getLiveSessionStatusDot(session.status);
+                  return (
+                    <tr key={session.id || idx} className="border-b border-[#161b22] hover:bg-[#161b22]">
+                      <td className="py-3 px-4">
+                        <span className="text-white font-medium truncate block max-w-[200px]">{session.label}</span>
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className={`text-[10px] px-2 py-0.5 rounded border ${getLiveSessionKindStyle(session.kind)}`}>
+                          {session.kind}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-[#8b949e] truncate max-w-[120px]">
+                        {session.executor || '—'}
+                      </td>
+                      <td className="py-3 px-4 text-[#6e7681] truncate max-w-[200px]" title={session.lastAction}>
+                        {truncateAction(session.lastAction || '', 50)}
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <span className={`w-2 h-2 rounded-full ${statusInfo.color}`} />
+                          <span className="text-[10px] text-[#8b949e]">{statusInfo.label}</span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-right text-[#8b949e]">
+                        {formatLastActive(session.lastActiveMinutes)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* 任务进度条 */}
+      {taskProgress && (
+        <div className="bg-[#0d1117] rounded-xl border border-[#30363d] overflow-hidden">
+          <div className="px-4 py-3 border-b border-[#21262d] flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span>📊</span>
+              <span className="font-semibold text-white text-sm">任务进度</span>
+              <span className="text-xs text-[#8b949e]">
+                {taskProgress.completed}/{taskProgress.total} 完成
+              </span>
+            </div>
+            <span className="text-lg font-bold text-green-400">
+              {taskProgress.percentage.toFixed(0)}%
+            </span>
+          </div>
+          <div className="p-4">
+            {/* 总进度条 */}
+            <div className="mb-4">
+              <div className="h-3 bg-[#21262d] rounded-full overflow-hidden">
+                <div
+                  className="h-3 bg-gradient-to-r from-green-500 to-cyan-500 rounded-full transition-all duration-700"
+                  style={{ width: `${taskProgress.percentage}%` }}
+                />
+              </div>
+            </div>
+            {/* 各阶段进度 */}
+            {taskProgress.phases && taskProgress.phases.length > 0 && (
+              <div className="space-y-2">
+                {taskProgress.phases.map((phase, idx) => (
+                  <div key={idx}>
+                    <div className="flex justify-between text-xs mb-1">
+                      <span className="text-[#8b949e]">{phase.name}</span>
+                      <span className="text-white font-medium">{phase.done}/{phase.tasks}</span>
+                    </div>
+                    <div className="h-2 bg-[#21262d] rounded-full overflow-hidden">
+                      <div
+                        className="h-2 bg-blue-500 rounded-full transition-all duration-500"
+                        style={{ width: `${phase.tasks > 0 ? (phase.done / phase.tasks) * 100 : 0}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Screen 进程 */}
       <div className="bg-[#0d1117] rounded-xl border border-[#30363d] overflow-hidden">
         <div className="px-4 py-3 border-b border-[#21262d] flex items-center justify-between">
