@@ -93,6 +93,8 @@ export interface WaliExecution {
   started_at: string;
   finished_at: string | null;
   task_title: string;
+  task_id?: string | null; // ID of the business task this execution belongs to
+  matched_task?: string | null; // ID of the matched task (set after association)
   proposal?: string;
   tasks?: string[];
   fail_reason?: string | null;

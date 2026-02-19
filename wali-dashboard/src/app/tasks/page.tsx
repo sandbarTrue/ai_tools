@@ -12,6 +12,9 @@ interface BusinessTask {
   source: string;
   goal: string;
   executions: string[]; // execution ids
+  proposal?: string; // task-level proposal from proposals/ directory
+  manualExecs?: { title: string; done: boolean; tool: string; note: string }[];
+  createdAt?: string;
 }
 
 interface TasksResult {
@@ -65,10 +68,6 @@ interface WorkflowStages {
 
 // 计算工作流阶段状态
 function getWorkflowStages(task: BusinessTask, execs: WaliExecution[]): WorkflowStages {
-  // 提案: 有 proposal 的 execution 存在 → 已完成
-  const hasProposal = execs.some(e => (e as any).proposal);
-  const proposal: WorkflowStageStatus = hasProposal ? 'completed' : 'not_started';
-
   // 执行: 有任何 execution → 进行中; 全部 success → 已完成
   let execution: WorkflowStageStatus = 'not_started';
   if (execs.length > 0) {
@@ -78,6 +77,13 @@ function getWorkflowStages(task: BusinessTask, execs: WaliExecution[]): Workflow
 
   // 验收: task.status === 'done' → 已完成
   const review: WorkflowStageStatus = task.status === 'done' ? 'completed' : 'not_started';
+
+  // 提案: task.proposal 存在 OR execution 有 proposal → 已完成
+  const hasTaskProposal = !!task.proposal;
+  const hasExecProposal = execs.some(e => (e as any).proposal);
+  const proposal: WorkflowStageStatus = (hasTaskProposal || hasExecProposal || execution === 'completed' || review === 'completed')
+    ? 'completed'
+    : 'not_started';
 
   return { proposal, execution, review };
 }
@@ -120,6 +126,40 @@ function WorkflowProgressBar({ stages }: { stages: WorkflowStages }) {
       })}
     </div>
   );
+}
+
+// 验证提案内容与任务标题是否相关
+function isProposalRelevant(proposal: string, taskTitle: string): boolean {
+  if (!proposal || !taskTitle) return false;
+
+  // 提取任务标题中的关键词（过滤停用词）
+  const stopWords = new Set(['的', '与', '和', '及', '或', '在', '对', '为', '了', '中', '以', '及', '到', '从', '将', '被', '把', '让', '给', '向', '等', '、', '，', '。', '+']);
+
+  // 从任务标题提取关键词（保留中文字符、英文单词、数字）
+  const taskKeywords = taskTitle
+    .split(/[\s+/\\\-_:]+/)
+    .filter(word => word.length >= 2 && !stopWords.has(word))
+    .flatMap(word => {
+      // 中文按2-4字拆分
+      if (/[\u4e00-\u9fa5]/.test(word)) {
+        const result: string[] = [];
+        for (let i = 0; i < word.length - 1; i++) {
+          result.push(word.slice(i, i + 2));
+          if (i < word.length - 2) result.push(word.slice(i, i + 3));
+        }
+        return result;
+      }
+      return [word.toLowerCase()];
+    });
+
+  if (taskKeywords.length === 0) return true; // 无法提取关键词时默认显示
+
+  // 检查提案中是否包含任务关键词
+  const proposalLower = proposal.toLowerCase();
+  const matchCount = taskKeywords.filter(kw => proposalLower.includes(kw.toLowerCase())).length;
+
+  // 至少匹配20%的关键词
+  return matchCount >= Math.max(1, taskKeywords.length * 0.2);
 }
 
 // 提案摘要卡片组件
@@ -212,7 +252,7 @@ export default function TasksPage() {
     : [];
 
   // Manual executions from TASK.md
-  const manualExecs: { title: string; done: boolean; tool: string; note: string }[] = (selectedTask as any)?.manualExecs || [];
+  const manualExecs = selectedTask?.manualExecs || [];
 
   // Stats
   const totalExecs = taskExecs.length + manualExecs.length;
@@ -251,8 +291,8 @@ export default function TasksPage() {
             const st = statusLabel(task.status);
             const isSelected = selectedTask?.id === task.id;
             const execCount = task.executions.length;
-            const manualCount = ((task as any).manualExecs || []).length;
-            const manualDone = ((task as any).manualExecs || []).filter((m: any) => m.done).length;
+            const manualCount = (task.manualExecs || []).length;
+            const manualDone = (task.manualExecs || []).filter((m: any) => m.done).length;
             return (
               <div
                 key={task.id}
@@ -332,9 +372,22 @@ export default function TasksPage() {
 
               {/* 提案摘要卡片 - 在执行记录上方 */}
               {(() => {
-                const firstProposalExec = taskExecs.find(e => (e as any).proposal);
-                return firstProposalExec && (firstProposalExec as any).proposal ? (
-                  <ProposalCard proposal={(firstProposalExec as any).proposal} />
+                // 优先从 task.proposal 读（proposals/ 目录，task_id 关联）
+                const taskProposal = selectedTask.proposal;
+                console.log('[DEBUG] selectedTask.proposal:', !!taskProposal, 'keys:', Object.keys(selectedTask));
+                if (taskProposal) {
+                  return <ProposalCard proposal={taskProposal} />;
+                }
+                // 回退：从关联 execution 的 proposal 读
+                const matchedExec = taskExecs.find(e => (e as any).matched_task === selectedTask.id && (e as any).proposal);
+                const firstProposalExec = matchedExec || taskExecs.find(e => (e as any).proposal);
+                const proposalText = firstProposalExec && (firstProposalExec as any).proposal;
+                const isRelevant = proposalText && (
+                  (firstProposalExec && (firstProposalExec as any).matched_task === selectedTask.id) ||
+                  isProposalRelevant(proposalText, selectedTask.title)
+                );
+                return isRelevant ? (
+                  <ProposalCard proposal={proposalText} />
                 ) : null;
               })()}
 

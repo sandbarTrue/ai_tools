@@ -122,7 +122,7 @@ export default function ActiveTasksCard({ stats, isLive }: ActiveTasksCardProps)
             </div>
           ) : (
             <div className="text-xs text-[#6e7681] py-2 text-center">
-              无活跃进程
+              当前无编码任务在执行
             </div>
           )}
         </div>
