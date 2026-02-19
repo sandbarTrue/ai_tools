@@ -2,1124 +2,480 @@
 
 import { useState, useEffect } from 'react';
 import ModelTag from '@/components/ModelTag';
-import StatusDot from '@/components/StatusDot';
-import { Task, TaskStatus } from '@/types';
-import { defaultTasks } from '@/data/tasks';
-import { fetchStats, StatsData, ActiveTask, ClaudeCodeData, LiveSession, TaskProgress, OpenSpecHistory } from '@/lib/api';
+import { fetchStats, StatsData, WaliExecution } from '@/lib/api';
 
-function formatTokens(n: number): string {
-  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-  if (n >= 1000) return (n / 1000).toFixed(0) + 'K';
-  return n.toString();
+// 业务任务类型
+interface BusinessTask {
+  id: string;
+  title: string;
+  status: string; // active | done | blocked | paused
+  source: string;
+  goal: string;
+  executions: string[]; // execution ids
 }
 
-const columns: { key: TaskStatus; label: string; emoji: string; color: string }[] = [
-  { key: 'in-progress', label: '进行中', emoji: '🔄', color: 'border-t-blue-500' },
-  { key: 'planned', label: '计划中', emoji: '📋', color: 'border-t-yellow-500' },
-  { key: 'blocked', label: '阻塞', emoji: '🚫', color: 'border-t-red-500' },
-];
-
-const priorityColors: Record<string, string> = {
-  '高': 'text-red-400 bg-red-500/10 border-red-500/30',
-  '中': 'text-yellow-400 bg-yellow-500/10 border-yellow-500/30',
-  '低': 'text-gray-400 bg-gray-500/10 border-gray-500/30',
-};
-
-const toolIcons: Record<string, string> = {
-  browser: '🌐',
-  exec: '⚡',
-  write: '✏️',
-  ssh: '🔒',
-  vercel: '▲',
-  git: '🔀',
-  feishu_doc: '📄',
-  feishu: '💬',
-  feishu_api: '🔗',
-  image: '🖼️',
-  mysql: '🗃️',
-  web_search: '🔍',
-  cron: '⏰',
-};
-
-function formatTimeAgo(ts: string, now: number): string {
-  if (!ts) return '—';
-  const start = new Date(ts).getTime();
-  if (isNaN(start)) return '—';
-  const diff = now - start;
-  if (diff < 0) return '刚刚';
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return '刚刚';
-  if (mins < 60) return `${mins} 分钟前`;
-  const hrs = Math.floor(mins / 60);
-  return `${hrs} 小时前`;
+interface TasksResult {
+  total: number;
+  completed: number;
+  active: number;
+  tasks: BusinessTask[];
 }
 
-function getSessionTypeLabel(cwd: string): { label: string; color: string } {
-  if (cwd.includes('subagent') || cwd.includes('agent')) {
-    return { label: 'subagent', color: 'bg-orange-500/15 text-orange-400 border-orange-500/30' };
-  }
-  if (cwd.includes('group')) {
-    return { label: 'group', color: 'bg-purple-500/15 text-purple-400 border-purple-500/30' };
-  }
-  return { label: 'main', color: 'bg-green-500/15 text-green-400 border-green-500/30' };
+function formatDuration(ms: number): string {
+  if (!ms || ms <= 0) return '—';
+  if (ms < 60000) return `${Math.round(ms / 1000)}秒`;
+  const m = Math.floor(ms / 60000);
+  const s = Math.round((ms % 60000) / 1000);
+  return `${m}分${s}秒`;
 }
 
-// Live session helpers
-function getLiveSessionKindStyle(kind: string): string {
-  switch (kind) {
-    case 'main': return 'bg-purple-500/15 text-purple-400 border-purple-500/30';
-    case 'group': return 'bg-blue-500/15 text-blue-400 border-blue-500/30';
-    case 'subagent': return 'bg-green-500/15 text-green-400 border-green-500/30';
-    default: return 'bg-gray-500/15 text-gray-400 border-gray-500/30';
+function formatCost(n: number): string {
+  if (n >= 1) return `$${n.toFixed(2)}`;
+  if (n > 0) return `$${n.toFixed(4)}`;
+  return '$0';
+}
+
+function statusLabel(s: string): { text: string; color: string; bg: string } {
+  switch (s) {
+    case 'active': return { text: '进行中', color: 'text-green-400', bg: 'bg-green-500/15 border-green-500/30' };
+    case 'done': return { text: '已完成', color: 'text-[#8b949e]', bg: 'bg-[#21262d] border-[#30363d]' };
+    case 'blocked': return { text: '阻塞', color: 'text-red-400', bg: 'bg-red-500/15 border-red-500/30' };
+    case 'paused': return { text: '暂停', color: 'text-yellow-400', bg: 'bg-yellow-500/15 border-yellow-500/30' };
+    default: return { text: s, color: 'text-[#8b949e]', bg: 'bg-[#21262d] border-[#30363d]' };
   }
 }
 
-function getLiveSessionStatusDot(status: string): { color: string; label: string } {
-  switch (status) {
-    case 'active': return { color: 'bg-green-400', label: '活跃' };
-    case 'recent': return { color: 'bg-yellow-400', label: '近期' };
-    case 'idle': return { color: 'bg-gray-400', label: '空闲' };
-    default: return { color: 'bg-gray-400', label: '未知' };
+function execStatusStyle(s: string): { dot: string; label: string; badge: string } {
+  switch (s) {
+    case 'success': return { dot: 'bg-green-400', label: '成功', badge: 'bg-green-500/15 text-green-400 border-green-500/30' };
+    case 'failed': return { dot: 'bg-red-400', label: '失败', badge: 'bg-red-500/15 text-red-400 border-red-500/30' };
+    case 'running': return { dot: 'bg-yellow-400 animate-pulse', label: '运行中', badge: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30' };
+    default: return { dot: 'bg-gray-400', label: '未知', badge: 'bg-[#21262d] text-[#8b949e] border-[#30363d]' };
   }
 }
 
-function formatLastActive(minutes: number): string {
-  if (minutes < 1) return '刚刚';
-  if (minutes < 60) return `${minutes} 分钟前`;
-  const hrs = Math.floor(minutes / 60);
-  if (hrs < 24) return `${hrs} 小时前`;
-  const days = Math.floor(hrs / 24);
-  return `${days} 天前`;
+// 工作流阶段状态
+type WorkflowStageStatus = 'completed' | 'in_progress' | 'not_started';
+
+interface WorkflowStages {
+  proposal: WorkflowStageStatus;
+  execution: WorkflowStageStatus;
+  review: WorkflowStageStatus;
 }
 
-// OpenSpec 历史记录组件
-function OpenSpecHistorySection({ history }: { history: OpenSpecHistory[] }) {
-  const [expandedChanges, setExpandedChanges] = useState<Set<string>>(new Set());
+// 计算工作流阶段状态
+function getWorkflowStages(task: BusinessTask, execs: WaliExecution[]): WorkflowStages {
+  // 提案: 有 proposal 的 execution 存在 → 已完成
+  const hasProposal = execs.some(e => (e as any).proposal);
+  const proposal: WorkflowStageStatus = hasProposal ? 'completed' : 'not_started';
 
-  const toggleChange = (change: string) => {
-    setExpandedChanges(prev => {
-      const next = new Set(prev);
-      if (next.has(change)) {
-        next.delete(change);
-      } else {
-        next.add(change);
-      }
-      return next;
-    });
-  };
+  // 执行: 有任何 execution → 进行中; 全部 success → 已完成
+  let execution: WorkflowStageStatus = 'not_started';
+  if (execs.length > 0) {
+    const allSuccess = execs.every(e => e.status === 'success');
+    execution = allSuccess ? 'completed' : 'in_progress';
+  }
 
-  const getStatusStyle = (status: string) => {
+  // 验收: task.status === 'done' → 已完成
+  const review: WorkflowStageStatus = task.status === 'done' ? 'completed' : 'not_started';
+
+  return { proposal, execution, review };
+}
+
+// 工作流进度条组件
+function WorkflowProgressBar({ stages }: { stages: WorkflowStages }) {
+  const stageConfig = [
+    { key: 'proposal', label: '提案', icon: '📝' },
+    { key: 'execution', label: '执行', icon: '🔧' },
+    { key: 'review', label: '验收', icon: '✅' },
+  ] as const;
+
+  const getStyle = (status: WorkflowStageStatus) => {
     switch (status) {
-      case 'success':
-        return { dot: 'bg-green-400', badge: 'bg-green-500/15 text-green-400 border-green-500/30', label: '成功' };
-      case 'failed':
-        return { dot: 'bg-red-400', badge: 'bg-red-500/15 text-red-400 border-red-500/30', label: '失败' };
-      case 'in_progress':
-        return { dot: 'bg-yellow-400 animate-pulse', badge: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30', label: '进行中' };
-      default:
-        return { dot: 'bg-gray-400', badge: 'bg-gray-500/15 text-gray-400 border-gray-500/30', label: '未知' };
+      case 'completed': return { bg: 'bg-green-500', border: 'border-green-500', text: 'text-green-400', label: '已完成' };
+      case 'in_progress': return { bg: 'bg-yellow-500', border: 'border-yellow-500', text: 'text-yellow-400', label: '进行中' };
+      default: return { bg: 'bg-gray-600', border: 'border-gray-600', text: 'text-gray-500', label: '未开始' };
     }
   };
 
   return (
-    <div className="bg-[#0d1117] rounded-xl border border-[#30363d] overflow-hidden">
-      <div className="px-4 py-3 border-b border-[#21262d] flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span>📦</span>
-          <span className="font-semibold text-white text-sm">OpenSpec 任务记录</span>
-          <span className="bg-cyan-500/15 text-cyan-400 text-xs font-medium px-2 py-0.5 rounded-full">
-            {history.length} 个
-          </span>
-        </div>
-      </div>
-      <div className="p-4">
-        {history.length > 0 ? (
-          <div className="space-y-2">
-            {history.map((record, idx) => {
-              const isExpanded = expandedChanges.has(record.change);
-              const statusInfo = getStatusStyle(record.status);
-              return (
-                <div key={idx} className="bg-[#161b22] rounded-lg border border-[#21262d] overflow-hidden">
-                  {/* 记录头 */}
-                  <div
-                    className="flex items-center gap-3 p-3 cursor-pointer hover:bg-[#1c2128] transition-colors"
-                    onClick={() => toggleChange(record.change)}
-                  >
-                    <span className={`w-2 h-2 rounded-full shrink-0 ${statusInfo.dot}`} />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs text-white font-medium truncate">{record.change}</div>
-                      <div className="text-[10px] text-[#6e7681] mt-0.5 flex items-center gap-2">
-                        <span className="text-green-400">{record.completed}/{record.total} 任务</span>
-                        {record.duration && <span>· {record.duration}</span>}
-                        {record.cost && <span className="text-purple-400">· {record.cost}</span>}
-                      </div>
-                    </div>
-                    <span className={`text-[10px] px-2 py-0.5 rounded border ${statusInfo.badge}`}>
-                      {statusInfo.label}
-                    </span>
-                    <span className="text-[#484f58] text-xs">{isExpanded ? '▲' : '▼'}</span>
-                  </div>
+    <div className="flex items-center justify-between py-3">
+      {stageConfig.map((stage, idx) => {
+        const status = stages[stage.key];
+        const style = getStyle(status);
+        return (
+          <div key={stage.key} className="flex items-center flex-1">
+            <div className="flex flex-col items-center">
+              <div className={`w-8 h-8 rounded-full ${style.bg} flex items-center justify-center text-white text-sm`}>
+                {stage.icon}
+              </div>
+              <span className={`text-xs mt-1 ${style.text}`}>{stage.label}</span>
+              <span className="text-[10px] text-[#6e7681]">{style.label}</span>
+            </div>
+            {idx < stageConfig.length - 1 && (
+              <div className={`flex-1 h-0.5 mx-2 ${stages[stage.key] === 'completed' ? 'bg-green-500' : 'bg-gray-700'}`} />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
-                  {/* 展开的任务列表 */}
-                  {isExpanded && record.tasks && (
-                    <div className="border-t border-[#21262d] p-2 space-y-1">
-                      {record.tasks.map((task, tIdx) => (
-                        <div key={tIdx} className="flex items-center gap-2 text-[11px] p-2 bg-[#0d1117] rounded">
-                          <span className={task.done ? 'text-green-400' : 'text-[#484f58]'}>
-                            {task.done ? '☑' : '☐'}
-                          </span>
-                          <span className={task.done ? 'text-[#8b949e] line-through' : 'text-white'}>
-                            {task.title}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="text-center py-8 text-[#6e7681] text-sm">
-            暂无 OpenSpec 记录
-          </div>
+// 提案摘要卡片组件
+function ProposalCard({ proposal }: { proposal: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const lines = proposal.split('\n');
+  const preview = lines.slice(0, 2).join('\n');
+  const needsExpand = lines.length > 2 || proposal.length > 100;
+
+  return (
+    <div className="bg-[#161b22] rounded-lg border border-cyan-500/20 overflow-hidden">
+      <div className="px-3 py-2 border-b border-[#21262d] flex items-center justify-between">
+        <span className="text-xs text-cyan-400 font-medium">📄 提案摘要</span>
+        {needsExpand && (
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="text-[10px] text-purple-400 hover:text-purple-300 transition-colors"
+          >
+            {expanded ? '收起 ▲' : '展开 ▼'}
+          </button>
         )}
+      </div>
+      <div className="p-3">
+        <pre className="text-[11px] text-[#8b949e] whitespace-pre-wrap font-sans leading-relaxed">
+          {expanded ? proposal : preview}
+        </pre>
       </div>
     </div>
   );
 }
 
-function truncateAction(action: string, maxLen: number = 50): string {
-  if (!action) return '—';
-  if (action.length <= maxLen) return action;
-  return action.slice(0, maxLen) + '...';
-}
-
-// Claude Code Session 分组组件
-interface ClaudeSession {
-  id: string;
-  cwd: string;
-  started: string;
-  ended: string | null;
-  tools: number;
-  failures: number;
-}
-
-function ClaudeCodeSessionsGrouped({
-  sessions,
-  totalEvents,
-  now
-}: {
-  sessions: ClaudeSession[];
-  totalEvents: number;
-  now: number;
-}) {
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
-
-  // 按 cwd 分组
-  const groupedSessions = sessions.reduce((acc, session) => {
-    const key = session.cwd;
-    if (!acc[key]) {
-      acc[key] = [];
-    }
-    acc[key].push(session);
-    return acc;
-  }, {} as Record<string, ClaudeSession[]>);
-
-  const groupEntries = Object.entries(groupedSessions);
-  // 按最后一次执行时间排序
-  groupEntries.sort((a, b) => {
-    const lastA = a[1][a[1].length - 1]?.started || '';
-    const lastB = b[1][b[1].length - 1]?.started || '';
-    return new Date(lastB).getTime() - new Date(lastA).getTime();
-  });
-
-  const toggleGroup = (cwd: string) => {
-    setExpandedGroups(prev => {
-      const next = new Set(prev);
-      if (next.has(cwd)) {
-        next.delete(cwd);
-      } else {
-        next.add(cwd);
-      }
-      return next;
-    });
-  };
-
+// 分派优先级卡片
+function DispatchPriorityCard() {
   return (
-    <div className="bg-[#0d1117] rounded-xl border border-[#30363d] overflow-hidden">
-      <div className="px-4 py-3 border-b border-[#21262d] flex items-center justify-between">
+    <div className="bg-[#0d1117] rounded-lg border border-[#21262d] p-3 mt-4">
+      <div className="text-xs text-[#8b949e] font-medium mb-2">🔀 分派优先级</div>
+      <div className="space-y-1 text-[11px]">
         <div className="flex items-center gap-2">
-          <span>💻</span>
-          <span className="font-semibold text-white text-sm">Claude Code Session</span>
-          <span className="bg-purple-500/15 text-purple-400 text-xs font-medium px-2 py-0.5 rounded-full">
-            {groupEntries.length} 项目
-          </span>
-          <span className="text-[10px] text-[#6e7681]">
-            ({sessions.length} 次执行)
-          </span>
+          <span className="text-green-400 font-mono">1.</span>
+          <span className="text-white">Claude Code + GLM-5</span>
+          <span className="text-[#6e7681]">(编码)</span>
         </div>
-        <span className="text-xs text-[#6e7681]">
-          共 {totalEvents} 事件
-        </span>
-      </div>
-      <div className="p-4">
-        {groupEntries.length > 0 ? (
-          <div className="space-y-2 max-h-80 overflow-y-auto">
-            {groupEntries.slice(0, 15).map(([cwd, groupSessions]) => {
-              const isExpanded = expandedGroups.has(cwd);
-              const sessionType = getSessionTypeLabel(cwd);
-              const lastSession = groupSessions[groupSessions.length - 1];
-              const totalTools = groupSessions.reduce((s, ses) => s + ses.tools, 0);
-              const totalFailures = groupSessions.reduce((s, ses) => s + ses.failures, 0);
-              const hasRunning = groupSessions.some(s => !s.ended);
-
-              return (
-                <div key={cwd} className="bg-[#161b22] rounded-lg border border-[#21262d] overflow-hidden">
-                  {/* 分组头 */}
-                  <div
-                    className="flex items-center gap-3 p-3 cursor-pointer hover:bg-[#1c2128] transition-colors"
-                    onClick={() => toggleGroup(cwd)}
-                  >
-                    <span className={`text-[10px] px-2 py-0.5 rounded border ${sessionType.color}`}>
-                      {sessionType.label}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs text-[#8b949e] truncate font-mono" title={cwd}>
-                        {cwd.split('/').slice(-2).join('/')}
-                      </div>
-                      <div className="text-[10px] text-[#6e7681] mt-0.5 flex items-center gap-2">
-                        <span className="text-purple-400 font-medium">{groupSessions.length} 次执行</span>
-                        {lastSession.started && (
-                          <span>最后 {formatTimeAgo(lastSession.started, now)}</span>
-                        )}
-                        <span>· {totalTools} 工具</span>
-                        {totalFailures > 0 && (
-                          <span className="text-red-400">· {totalFailures} 失败</span>
-                        )}
-                      </div>
-                    </div>
-                    {hasRunning && (
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-500/15 text-green-400 border border-green-500/30">
-                        运行中
-                      </span>
-                    )}
-                    <span className="text-[#484f58] text-xs">{isExpanded ? '▲' : '▼'}</span>
-                  </div>
-
-                  {/* 展开的详情 */}
-                  {isExpanded && (
-                    <div className="border-t border-[#21262d] p-2 space-y-1.5">
-                      {groupSessions.map((session, idx) => (
-                        <div key={session.id || idx} className="flex items-center gap-2 text-[11px] p-2 bg-[#0d1117] rounded">
-                          <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: session.ended ? '#22c55e' : '#22c55e' }} />
-                          <span className="text-[#6e7681] font-mono w-16 shrink-0">
-                            {session.started ? new Date(session.started).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '—'}
-                          </span>
-                          <span className="text-[#8b949e] flex-1">
-                            {session.tools} 工具
-                            {session.failures > 0 && <span className="text-red-400 ml-1">· {session.failures} 失败</span>}
-                          </span>
-                          {!session.ended && (
-                            <span className="text-green-400">运行中</span>
-                          )}
-                          {session.ended && (
-                            <span className="text-[#484f58]">
-                              结束 {new Date(session.ended).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
-                            </span>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-            {groupEntries.length > 15 && (
-              <div className="text-[10px] text-[#6e7681] text-center py-2">
-                还有 {groupEntries.length - 15} 个项目
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="text-center py-8 text-[#6e7681] text-sm">
-            暂无 Session 记录
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          <span className="text-yellow-400 font-mono">2.</span>
+          <span className="text-white">GLM-5 子agent</span>
+          <span className="text-[#6e7681]">(文本)</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-orange-400 font-mono">3.</span>
+          <span className="text-white">MiniMax-M2.5 子agent</span>
+          <span className="text-[#6e7681]">(备选)</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-red-400 font-mono">4.</span>
+          <span className="text-white">Opus 4.6</span>
+          <span className="text-[#6e7681]">(兜底，需报备)</span>
+        </div>
       </div>
     </div>
   );
 }
 
 export default function TasksPage() {
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<'board' | 'list'>('board');
-  const [showArchived, setShowArchived] = useState(false);
-  const [activeTab, setActiveTab] = useState<'realtime' | 'history'>('realtime');
   const [stats, setStats] = useState<StatsData | null>(null);
-  const [now, setNow] = useState(() => Date.now());
+  const [loading, setLoading] = useState(true);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       const data = await fetchStats();
       if (cancelled) return;
-      if (data) {
-        setStats(data);
-      }
+      if (data) setStats(data);
+      setLoading(false);
     }
     load();
     const interval = setInterval(load, 30_000);
     return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(timer);
-  }, []);
+  const waliStatus = stats?.wali_status as any;
+  const tasksResult: TasksResult | null = waliStatus?.tasks || null;
+  const allExecutions: WaliExecution[] = waliStatus?.executions || [];
+  const tasks = tasksResult?.tasks || [];
 
-  const toggleExpand = (id: string) => {
-    setExpandedId(prev => prev === id ? null : id);
-  };
+  // Auto-select first active task
+  const selectedTask = tasks.find(t => t.id === selectedTaskId) || tasks.find(t => t.status === 'active') || tasks[0];
+  const taskExecs = selectedTask
+    ? selectedTask.executions.map(eid => allExecutions.find(e => e.id === eid)).filter((e): e is WaliExecution => !!e)
+    : [];
 
-  const activeTasks = defaultTasks.filter(t => t.status !== 'done');
-  const archivedTasks = defaultTasks.filter(t => t.status === 'done');
+  // Manual executions from TASK.md
+  const manualExecs: { title: string; done: boolean; tool: string; note: string }[] = (selectedTask as any)?.manualExecs || [];
 
-  const tasksTotal = defaultTasks.length;
-  const tasksDone = archivedTasks.length;
-  const tasksInProgress = defaultTasks.filter(t => t.status === 'in-progress').length;
-  const tasksPlanned = defaultTasks.filter(t => t.status === 'planned').length;
-  const tasksBlocked = defaultTasks.filter(t => t.status === 'blocked').length;
+  // Stats
+  const totalExecs = taskExecs.length + manualExecs.length;
+  const successExecs = taskExecs.filter(e => e.status === 'success').length + manualExecs.filter(e => e.done).length;
+  const totalCost = taskExecs.reduce((sum, e) => sum + (e.cost || 0), 0);
+  const totalDuration = taskExecs.reduce((sum, e) => sum + (e.duration_ms || 0), 0);
 
-  const totalPlanTokens = defaultTasks.reduce((s, t) => s + (t.planTokens || 0), 0);
-  const totalExecTokens = defaultTasks.reduce((s, t) => s + (t.execTokens || 0), 0);
-
-  // 从 stats 获取实时数据
-  const screenTasks: ActiveTask[] = stats?.active_tasks || [];
-  const waliQueue = stats?.wali_status?.queue || [];
-  const claudeCode = stats?.claude_code;
-  const sessions = claudeCode?.sessions || [];
-  const liveSessions: LiveSession[] = stats?.live_sessions || [];
-  const taskProgress: TaskProgress | undefined = (stats as any)?.wali_status?.taskProgress || stats?.task_progress;
-  const openspecHistory: OpenSpecHistory[] = stats?.openspec_history || [];
-
-  const renderTaskCard = (task: Task) => {
-    const isExpanded = expandedId === task.id;
+  if (loading && !stats) {
     return (
-      <div
-        key={task.id}
-        onClick={() => toggleExpand(task.id)}
-        className={`
-          bg-[#161b22] border rounded-lg p-4 cursor-pointer transition-all duration-200
-          ${isExpanded ? 'border-purple-500/50 ring-1 ring-purple-500/20' : 'border-[#30363d] hover:border-[#484f58]'}
-        `}
-      >
-        {/* Header */}
-        <div className="flex items-start justify-between gap-2 mb-2">
-          <h3 className="text-sm font-medium text-white leading-snug flex-1">
-            {task.title}
-          </h3>
-          <span className={`shrink-0 text-xs px-1.5 py-0.5 rounded border ${priorityColors[task.priority]}`}>
-            {task.priority}
-          </span>
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="text-center">
+          <div className="w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-[#8b949e] text-sm">加载中...</p>
         </div>
-
-        {/* Planner / Executor */}
-        <div className="flex items-center gap-2 mb-2 flex-wrap">
-          <span className="text-xs text-[#8b949e] bg-[#21262d] px-2 py-0.5 rounded" title="规划者">
-            🧠 {task.planner}
-          </span>
-          <span className="text-[#484f58] text-xs">→</span>
-          <span className="text-xs text-[#8b949e] bg-[#21262d] px-2 py-0.5 rounded" title="执行者">
-            ⚙️ {task.executor}
-          </span>
-        </div>
-
-        {/* Tags: Claude Code / OpenSpec */}
-        <div className="flex flex-wrap gap-1 mb-2">
-          {task.viaClaudeCode && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/10 text-green-400 border border-green-500/30">
-              🏷️ Claude Code
-            </span>
-          )}
-          {task.viaOpenSpec && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">
-              🏷️ OpenSpec
-            </span>
-          )}
-          {task.tools.slice(0, 3).map(tool => (
-            <span key={tool} className="text-[10px] px-1.5 py-0.5 rounded bg-[#21262d] text-[#8b949e] border border-[#30363d]">
-              {toolIcons[tool] || '🔧'} {tool}
-            </span>
-          ))}
-          {task.tools.length > 3 && (
-            <span className="text-[10px] text-[#6e7681]">+{task.tools.length - 3}</span>
-          )}
-        </div>
-
-        {/* Token consumption + Date */}
-        <div className="flex items-center justify-between text-xs text-[#6e7681]">
-          <div className="flex items-center gap-2">
-            {(task.planTokens || task.execTokens) ? (
-              <span className="text-[10px] text-[#484f58]">
-                规划 ~{formatTokens(task.planTokens || 0)} / 执行 ~{formatTokens(task.execTokens || 0)}
-                {task.tokenSource !== 'session-log' && (
-                  <span className="ml-1 text-yellow-600">(预估)</span>
-                )}
-              </span>
-            ) : null}
-          </div>
-          <span className="text-[#484f58]">{isExpanded ? '▲' : '▼'}</span>
-        </div>
-
-        {/* Expanded Content */}
-        {isExpanded && (
-          <div className="mt-3 pt-3 border-t border-[#21262d] space-y-3">
-            {task.description && (
-              <div>
-                <div className="text-xs text-[#6e7681] mb-1">📝 描述</div>
-                <p className="text-xs text-[#8b949e] leading-relaxed">{task.description}</p>
-              </div>
-            )}
-
-            {task.subtasks && task.subtasks.length > 0 && (
-              <div>
-                <div className="text-xs text-[#6e7681] mb-1">📋 子任务 ({task.subtasks.filter(s => s.done).length}/{task.subtasks.length})</div>
-                <div className="space-y-1">
-                  {task.subtasks.map(st => (
-                    <div key={st.id} className="flex items-center gap-2 text-xs">
-                      <span className={st.done ? 'text-green-400' : 'text-[#484f58]'}>
-                        {st.done ? '☑' : '☐'}
-                      </span>
-                      <span className={st.done ? 'text-[#8b949e] line-through' : 'text-white'}>
-                        {st.title}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div>
-                <span className="text-[#6e7681]">规划者</span>
-                <div className="text-white mt-0.5">{task.planner}</div>
-              </div>
-              <div>
-                <span className="text-[#6e7681]">执行者</span>
-                <div className="text-white mt-0.5">{task.executor}</div>
-              </div>
-              <div>
-                <span className="text-[#6e7681]">使用模型</span>
-                <div className="text-white mt-0.5">{task.model}</div>
-              </div>
-              <div>
-                <span className="text-[#6e7681]">创建时间</span>
-                <div className="text-white mt-0.5">{new Date(task.createdAt).toLocaleDateString('zh-CN')}</div>
-              </div>
-              {task.completedAt && (
-                <div>
-                  <span className="text-[#6e7681]">完成时间</span>
-                  <div className="text-green-400 mt-0.5">{new Date(task.completedAt).toLocaleDateString('zh-CN')}</div>
-                </div>
-              )}
-              {(task.planTokens || task.execTokens) ? (
-                <div>
-                  <span className="text-[#6e7681]">Token 消耗 {task.tokenSource !== 'session-log' && <span className="text-yellow-600 text-[10px]">(预估)</span>}</span>
-                  <div className="text-white mt-0.5">
-                    规划 {formatTokens(task.planTokens || 0)} + 执行 {formatTokens(task.execTokens || 0)}
-                  </div>
-                </div>
-              ) : null}
-            </div>
-
-            <div>
-              <span className="text-xs text-[#6e7681]">执行方式</span>
-              <div className="flex flex-wrap gap-1.5 mt-1">
-                {task.viaClaudeCode && (
-                  <span className="text-xs px-2 py-1 rounded-md bg-green-500/10 text-green-400 border border-green-500/30">
-                    ✅ Claude Code
-                  </span>
-                )}
-                {task.viaOpenSpec && (
-                  <span className="text-xs px-2 py-1 rounded-md bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">
-                    ✅ OpenSpec-bg
-                  </span>
-                )}
-                {!task.viaClaudeCode && !task.viaOpenSpec && (
-                  <span className="text-xs px-2 py-1 rounded-md bg-purple-500/10 text-purple-400 border border-purple-500/30">
-                    直接执行 (瓦力/Opus)
-                  </span>
-                )}
-              </div>
-            </div>
-
-            <div>
-              <span className="text-xs text-[#6e7681]">工具列表</span>
-              <div className="flex flex-wrap gap-1.5 mt-1">
-                {task.tools.map(tool => (
-                  <span key={tool} className="text-xs px-2 py-1 rounded-md bg-[#0d1117] text-[#8b949e] border border-[#30363d]">
-                    {toolIcons[tool] || '🔧'} {tool}
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            {/* OpenSpec Section */}
-            {task.viaOpenSpec && (task.openspecProposal || task.openspecTasks) && (
-              <div className="col-span-full border-t border-[#21262d] pt-3 mt-1">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-xs font-medium text-cyan-400">📦 OpenSpec</span>
-                  {task.openspecChange && (
-                    <span className="text-[10px] text-gray-500 bg-gray-700/50 px-1.5 py-0.5 rounded font-mono">
-                      change: {task.openspecChange}
-                    </span>
-                  )}
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {task.openspecProposal && (
-                    <div className="bg-[#0d1117] rounded-lg p-3 border border-cyan-500/20">
-                      <span className="text-[10px] text-cyan-400 font-medium uppercase tracking-wider">📄 Proposal</span>
-                      <pre className="text-[11px] text-gray-400 mt-1.5 whitespace-pre-wrap font-sans leading-relaxed">{task.openspecProposal}</pre>
-                    </div>
-                  )}
-                  {task.openspecTasks && (
-                    <div className="bg-[#0d1117] rounded-lg p-3 border border-green-500/20">
-                      <span className="text-[10px] text-green-400 font-medium uppercase tracking-wider">✅ Tasks.md</span>
-                      <pre className="text-[11px] text-gray-400 mt-1.5 whitespace-pre-wrap font-sans leading-relaxed">{task.openspecTasks}</pre>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
       </div>
     );
-  };
-
-  // 实时 tab 内容
-  const renderRealtimeContent = () => (
-    <div className="space-y-6">
-      {/* 活跃 Session 列表 */}
-      {liveSessions.length > 0 && (
-        <div className="bg-[#0d1117] rounded-xl border border-[#30363d] overflow-hidden">
-          <div className="px-4 py-3 border-b border-[#21262d] flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span>💬</span>
-              <span className="font-semibold text-white text-sm">活跃 Session</span>
-              <span className="bg-cyan-500/15 text-cyan-400 text-xs font-medium px-2 py-0.5 rounded-full">
-                {liveSessions.length} 个
-              </span>
-            </div>
-          </div>
-          {/* 桌面端表格视图 */}
-          <div className="hidden sm:block overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="text-[#6e7681] border-b border-[#21262d]">
-                  <th className="text-left py-2 px-4 font-medium">Label</th>
-                  <th className="text-left py-2 px-4 font-medium">Kind</th>
-                  <th className="text-left py-2 px-4 font-medium">Executor</th>
-                  <th className="text-left py-2 px-4 font-medium">Last Action</th>
-                  <th className="text-center py-2 px-4 font-medium">Status</th>
-                  <th className="text-right py-2 px-4 font-medium">活跃时间</th>
-                </tr>
-              </thead>
-              <tbody>
-                {liveSessions.map((session, idx) => {
-                  const statusInfo = getLiveSessionStatusDot(session.status);
-                  return (
-                    <tr key={session.id || idx} className="border-b border-[#161b22] hover:bg-[#161b22]">
-                      <td className="py-3 px-4">
-                        <span className="text-white font-medium truncate block max-w-[200px]">{session.label}</span>
-                      </td>
-                      <td className="py-3 px-4">
-                        <span className={`text-[10px] px-2 py-0.5 rounded border ${getLiveSessionKindStyle(session.kind)}`}>
-                          {session.kind}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-[#8b949e] truncate max-w-[120px]">
-                        {session.executor || '—'}
-                      </td>
-                      <td className="py-3 px-4 text-[#6e7681] truncate max-w-[200px]" title={session.lastAction}>
-                        {truncateAction(session.lastAction || '', 50)}
-                      </td>
-                      <td className="py-3 px-4 text-center">
-                        <div className="flex items-center justify-center gap-1.5">
-                          <span className={`w-2 h-2 rounded-full ${statusInfo.color}`} />
-                          <span className="text-[10px] text-[#8b949e]">{statusInfo.label}</span>
-                        </div>
-                      </td>
-                      <td className="py-3 px-4 text-right text-[#8b949e]">
-                        {formatLastActive(session.lastActiveMinutes)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          {/* 移动端卡片视图 */}
-          <div className="sm:hidden p-3 space-y-2">
-            {liveSessions.map((session, idx) => {
-              const statusInfo = getLiveSessionStatusDot(session.status);
-              return (
-                <div key={session.id || idx} className="p-3 bg-[#161b22] rounded-lg border border-[#21262d]">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className={`text-[10px] px-2 py-0.5 rounded border ${getLiveSessionKindStyle(session.kind)}`}>
-                      {session.kind}
-                    </span>
-                    <span className="text-white font-medium text-xs truncate flex-1">{session.label}</span>
-                    <span className={`w-2 h-2 rounded-full shrink-0 ${statusInfo.color}`} />
-                  </div>
-                  <div className="text-[11px] text-[#8b949e] mb-1 truncate" title={session.lastAction}>
-                    {truncateAction(session.lastAction || '', 40)}
-                  </div>
-                  <div className="flex items-center justify-between text-[10px] text-[#6e7681]">
-                    <span>{session.executor || '—'}</span>
-                    <span>{formatLastActive(session.lastActiveMinutes)}</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* 任务进度条 */}
-      {taskProgress && (
-        <div className="bg-[#0d1117] rounded-xl border border-[#30363d] overflow-hidden">
-          <div className="px-4 py-3 border-b border-[#21262d] flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span>📊</span>
-              <span className="font-semibold text-white text-sm">任务进度</span>
-              <span className="text-xs text-[#8b949e]">
-                {taskProgress.completed}/{taskProgress.total} 完成
-              </span>
-            </div>
-            <span className="text-lg font-bold text-green-400">
-              {taskProgress.percentage.toFixed(0)}%
-            </span>
-          </div>
-          <div className="p-4">
-            {/* 总进度条 */}
-            <div className="mb-4">
-              <div className="h-3 bg-[#21262d] rounded-full overflow-hidden">
-                <div
-                  className="h-3 bg-gradient-to-r from-green-500 to-cyan-500 rounded-full transition-all duration-700"
-                  style={{ width: `${taskProgress.percentage}%` }}
-                />
-              </div>
-            </div>
-            {/* 各阶段进度 */}
-            {taskProgress.phases && taskProgress.phases.length > 0 && (
-              <div className="space-y-2">
-                {taskProgress.phases.map((phase, idx) => (
-                  <div key={idx}>
-                    <div className="flex justify-between text-xs mb-1">
-                      <span className="text-[#8b949e]">{phase.name}</span>
-                      <span className="text-white font-medium">{phase.done}/{phase.tasks}</span>
-                    </div>
-                    <div className="h-2 bg-[#21262d] rounded-full overflow-hidden">
-                      <div
-                        className="h-2 bg-blue-500 rounded-full transition-all duration-500"
-                        style={{ width: `${phase.tasks > 0 ? (phase.done / phase.tasks) * 100 : 0}%` }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* OpenSpec 任务记录 */}
-      {openspecHistory.length > 0 && (
-        <OpenSpecHistorySection history={openspecHistory} />
-      )}
-
-      {/* Screen 进程 */}
-      <div className="bg-[#0d1117] rounded-xl border border-[#30363d] overflow-hidden">
-        <div className="px-4 py-3 border-b border-[#21262d] flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span>📺</span>
-            <span className="font-semibold text-white text-sm">Screen 进程</span>
-            <span className="bg-green-500/15 text-green-400 text-xs font-medium px-2 py-0.5 rounded-full">
-              {screenTasks.length} 个
-            </span>
-          </div>
-        </div>
-        <div className="p-4">
-          {screenTasks.length > 0 ? (
-            <div className="space-y-3">
-              {screenTasks.map((task, idx) => (
-                <div key={idx} className="flex items-center gap-3 p-3 bg-[#161b22] rounded-lg border border-[#21262d]">
-                  <StatusDot status={task.stale ? 'degraded' : 'healthy'} size="md" />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm text-white font-medium truncate">{task.name}</div>
-                    <div className="text-xs text-[#6e7681] mt-0.5">
-                      运行 {task.age_minutes} 分钟 · 最后输出 {task.last_output_minutes} 分钟前
-                    </div>
-                  </div>
-                  <span className={`text-xs px-2 py-1 rounded-full ${
-                    task.stale
-                      ? 'bg-yellow-500/15 text-yellow-400 border border-yellow-500/30'
-                      : 'bg-green-500/15 text-green-400 border border-green-500/30'
-                  }`}>
-                    {task.stale ? '无响应' : '运行中'}
-                  </span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-8 text-[#6e7681] text-sm">
-              暂无活跃的 Screen 进程
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Claude Code Session 历史 - 分组显示 */}
-      {claudeCode && (
-        <ClaudeCodeSessionsGrouped
-          sessions={sessions}
-          totalEvents={claudeCode.total_events}
-          now={now}
-        />
-      )}
-
-      {/* 待办队列 */}
-      <div className="bg-[#0d1117] rounded-xl border border-[#30363d] overflow-hidden">
-        <div className="px-4 py-3 border-b border-[#21262d] flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span>📋</span>
-            <span className="font-semibold text-white text-sm">待办队列</span>
-            <span className="bg-yellow-500/15 text-yellow-400 text-xs font-medium px-2 py-0.5 rounded-full">
-              {waliQueue.length} 项
-            </span>
-          </div>
-        </div>
-        <div className="p-4">
-          {waliQueue.length > 0 ? (
-            <div className="space-y-2">
-              {waliQueue.map((item, idx) => {
-                const taskStr = typeof item === 'string' ? item : item.task;
-                const executor = typeof item === 'object' ? item.executor : undefined;
-                const planned = typeof item === 'object' ? item.planned : undefined;
-                return (
-                  <div key={idx} className="flex items-center gap-3 p-3 bg-[#161b22] rounded-lg border border-[#21262d]">
-                    <StatusDot status="degraded" size="sm" />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm text-[#c9d1d9] truncate">{taskStr}</div>
-                      <div className="text-[10px] text-[#6e7681] mt-0.5 flex gap-2">
-                        {executor && <span className="text-purple-400">👤 {executor}</span>}
-                        {planned && <span>📅 {planned}</span>}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="text-center py-8 text-[#6e7681] text-sm">
-              队列为空
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
+  }
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-white">📋 任务看板</h1>
-          <p className="text-sm text-[#8b949e] mt-1">
-            共 {tasksTotal} 个任务 · ✅ {tasksDone} 完成 · 🔄 {tasksInProgress} 进行中 · 📋 {tasksPlanned} 计划
-            {tasksBlocked > 0 ? ` · 🚫 ${tasksBlocked} 阻塞` : ''}
-          </p>
-          <p className="text-xs text-[#6e7681] mt-0.5">
-            总 Token: 规划 ~{formatTokens(totalPlanTokens)} / 执行 ~{formatTokens(totalExecTokens)} <span className="text-yellow-600">(预估值，真实消耗见模型监控页)</span>
-          </p>
+      {/* Header */}
+      <div>
+        <h1 className="text-2xl font-bold text-white">📋 任务看板</h1>
+        <p className="text-sm text-[#8b949e] mt-1">
+          {tasksResult ? `${tasksResult.active} 个进行中 · ${tasksResult.completed} 个已完成 · 共 ${tasksResult.total} 个任务` : '加载中...'}
+        </p>
+      </div>
+
+      {/* 两栏布局 */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+        {/* 左栏：业务任务列表 */}
+        <div className="lg:col-span-4 space-y-2">
+          <div className="text-xs text-[#8b949e] uppercase tracking-wider mb-3 font-medium">业务任务</div>
+          {tasks.map(task => {
+            const st = statusLabel(task.status);
+            const isSelected = selectedTask?.id === task.id;
+            const execCount = task.executions.length;
+            const manualCount = ((task as any).manualExecs || []).length;
+            const manualDone = ((task as any).manualExecs || []).filter((m: any) => m.done).length;
+            return (
+              <div
+                key={task.id}
+                onClick={() => setSelectedTaskId(task.id)}
+                className={`p-3 rounded-lg border cursor-pointer transition-all ${
+                  isSelected
+                    ? 'bg-[#161b22] border-purple-500/50 ring-1 ring-purple-500/20'
+                    : 'bg-[#0d1117] border-[#21262d] hover:border-[#30363d]'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className={`text-sm font-medium ${task.status === 'done' ? 'text-[#8b949e]' : 'text-white'}`}>
+                    {task.title}
+                  </span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded border ${st.bg} ${st.color}`}>
+                    {st.text}
+                  </span>
+                </div>
+                {task.goal && (
+                  <p className="text-[11px] text-[#6e7681] mt-1 line-clamp-1">{task.goal}</p>
+                )}
+                <div className="flex items-center gap-3 mt-2 text-[10px] text-[#484f58]">
+                  {task.source && <span>📎 {task.source}</span>}
+                  {manualCount > 0 && <span>📋 {manualDone}/{manualCount} 子任务</span>}
+                  {execCount > 0 && <span>⚡ {execCount} 次执行</span>}
+                </div>
+              </div>
+            );
+          })}
+          {tasks.length === 0 && (
+            <div className="text-center py-8 text-[#6e7681] text-sm">暂无任务</div>
+          )}
         </div>
-        <div className="flex gap-2 self-start">
-          {/* Tab 切换 */}
-          <button
-            onClick={() => setActiveTab('realtime')}
-            className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
-              activeTab === 'realtime'
-                ? 'bg-green-500/20 border-green-500/50 text-green-400'
-                : 'bg-[#21262d] border-[#30363d] text-[#8b949e] hover:text-white'
-            }`}
-          >
-            实时
-          </button>
-          <button
-            onClick={() => setActiveTab('history')}
-            className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
-              activeTab === 'history'
-                ? 'bg-purple-500/20 border-purple-500/50 text-purple-400'
-                : 'bg-[#21262d] border-[#30363d] text-[#8b949e] hover:text-white'
-            }`}
-          >
-            历史
-          </button>
+
+        {/* 右栏：选中任务的详情 + Execution 列表 */}
+        <div className="lg:col-span-8">
+          {selectedTask ? (
+            <div className="space-y-4">
+              {/* 任务摘要 */}
+              <div className="bg-[#0d1117] rounded-xl border border-[#30363d] p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <h2 className="text-lg font-semibold text-white">{selectedTask.title}</h2>
+                  <span className={`text-xs px-2 py-0.5 rounded border ${statusLabel(selectedTask.status).bg} ${statusLabel(selectedTask.status).color}`}>
+                    {statusLabel(selectedTask.status).text}
+                  </span>
+                </div>
+                {selectedTask.goal && (
+                  <p className="text-sm text-[#8b949e] mb-3">{selectedTask.goal}</p>
+                )}
+
+                {/* 工作流进度条 */}
+                <div className="bg-[#161b22] rounded-lg p-3 mb-3">
+                  <div className="text-[10px] text-[#6e7681] uppercase tracking-wider mb-2">工作流</div>
+                  <WorkflowProgressBar stages={getWorkflowStages(selectedTask, taskExecs)} />
+                </div>
+
+                {/* 汇总统计 */}
+                <div className="grid grid-cols-4 gap-3">
+                  <div className="bg-[#161b22] rounded-lg p-2 text-center">
+                    <div className="text-lg font-bold text-white">{totalExecs}</div>
+                    <div className="text-[10px] text-[#6e7681]">执行次数</div>
+                  </div>
+                  <div className="bg-[#161b22] rounded-lg p-2 text-center">
+                    <div className="text-lg font-bold text-green-400">{successExecs}</div>
+                    <div className="text-[10px] text-[#6e7681]">成功</div>
+                  </div>
+                  <div className="bg-[#161b22] rounded-lg p-2 text-center">
+                    <div className="text-lg font-bold text-purple-400">{formatCost(totalCost)}</div>
+                    <div className="text-[10px] text-[#6e7681]">总费用</div>
+                  </div>
+                  <div className="bg-[#161b22] rounded-lg p-2 text-center">
+                    <div className="text-lg font-bold text-cyan-400">{formatDuration(totalDuration)}</div>
+                    <div className="text-[10px] text-[#6e7681]">总耗时</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 提案摘要卡片 - 在执行记录上方 */}
+              {(() => {
+                const firstProposalExec = taskExecs.find(e => (e as any).proposal);
+                return firstProposalExec && (firstProposalExec as any).proposal ? (
+                  <ProposalCard proposal={(firstProposalExec as any).proposal} />
+                ) : null;
+              })()}
+
+              {/* Execution 列表 */}
+              <div className="bg-[#0d1117] rounded-xl border border-[#30363d] overflow-hidden">
+                <div className="px-4 py-3 border-b border-[#21262d] flex items-center gap-2">
+                  <span>⚡</span>
+                  <span className="font-semibold text-white text-sm">执行记录</span>
+                  <span className="text-xs text-[#6e7681]">({taskExecs.length + manualExecs.length})</span>
+                </div>
+                <div className="divide-y divide-[#21262d]">
+                  {/* 手动执行记录（来自 TASK.md） */}
+                  {manualExecs.length > 0 && manualExecs.map((me, idx) => (
+                    <div key={`manual-${idx}`} className="flex items-center gap-3 px-4 py-3">
+                      <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${me.done ? 'bg-green-400' : 'bg-yellow-400'}`} />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs text-white font-medium">{me.title}</div>
+                        <div className="text-[10px] text-[#6e7681] mt-0.5 flex items-center gap-2">
+                          {me.tool && <span className="text-cyan-400">🔧 {me.tool}</span>}
+                          {me.note && <><span>·</span><span>{me.note}</span></>}
+                        </div>
+                      </div>
+                      <span className={`text-[10px] px-2 py-0.5 rounded border shrink-0 ${
+                        me.done ? 'bg-green-500/15 text-green-400 border-green-500/30' : 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30'
+                      }`}>
+                        {me.done ? '完成' : '进行中'}
+                      </span>
+                    </div>
+                  ))}
+                  {/* Claude Code / OpenSpec 执行记录 */}
+                  {taskExecs.length > 0 ? taskExecs.map(exec => {
+                    const st = execStatusStyle(exec.status);
+                    return (
+                      <details key={exec.id} className="group">
+                        <summary className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-[#161b22] transition-colors list-none [&::-webkit-details-marker]:hidden">
+                          <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${st.dot}`} />
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs text-white font-medium truncate">
+                              {exec.task_title || '(无标题)'}
+                            </div>
+                            <div className="text-[10px] text-[#6e7681] mt-0.5 flex items-center gap-2 flex-wrap">
+                              <span className="text-purple-400">{exec.model}</span>
+                              <span>·</span>
+                              <span>{formatDuration(exec.duration_ms)}</span>
+                              {exec.cost > 0 && <><span>·</span><span className="text-cyan-400">{formatCost(exec.cost)}</span></>}
+                              {(exec as any).project && <><span>·</span><span className="text-[#484f58]">📁 {(exec as any).project}</span></>}
+                            </div>
+                          </div>
+                          <span className={`text-[10px] px-2 py-0.5 rounded border shrink-0 ${st.badge}`}>
+                            {st.label}
+                          </span>
+                          <span className="text-[#484f58] text-xs group-open:rotate-180 transition-transform">▼</span>
+                        </summary>
+
+                        {/* 展开详情 */}
+                        <div className="px-4 pb-3 space-y-3 bg-[#0d1117]">
+                          {/* 执行信息 */}
+                          <div className="grid grid-cols-2 gap-3 text-xs pt-2 border-t border-[#21262d]">
+                            <div>
+                              <span className="text-[#6e7681]">执行工具</span>
+                              <div className="text-cyan-400 mt-0.5 font-medium">
+                                {(exec as any).tool || (exec.type === 'openspec' ? 'OpenSpec + Claude Code' : 'Claude Code')}
+                              </div>
+                            </div>
+                            <div>
+                              <span className="text-[#6e7681]">模型</span>
+                              <div className="text-purple-400 mt-0.5 font-medium">{exec.model}</div>
+                            </div>
+                            <div>
+                              <span className="text-[#6e7681]">开始</span>
+                              <div className="text-[#8b949e] mt-0.5">
+                                {exec.started_at ? new Date(exec.started_at).toLocaleString('zh-CN') : '—'}
+                              </div>
+                            </div>
+                            <div>
+                              <span className="text-[#6e7681]">结束</span>
+                              <div className="text-[#8b949e] mt-0.5">
+                                {exec.finished_at ? new Date(exec.finished_at).toLocaleString('zh-CN') : '—'}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* OpenSpec 提案 */}
+                          {exec.proposal && (
+                            <div className="bg-[#161b22] rounded-lg p-3 border border-cyan-500/20">
+                              <div className="text-[10px] text-cyan-400 font-medium uppercase tracking-wider mb-1">📄 提案</div>
+                              <pre className="text-[11px] text-[#8b949e] whitespace-pre-wrap font-sans leading-relaxed">
+                                {exec.proposal}
+                              </pre>
+                            </div>
+                          )}
+
+                          {/* 子任务（openspec tasks.md） */}
+                          {exec.tasks && exec.tasks.length > 0 && (
+                            <div>
+                              <div className="text-[10px] text-[#6e7681] uppercase tracking-wider mb-1.5">
+                                📝 子任务 ({exec.tasks.filter((t: any) => typeof t === 'object' ? t.done : true).length}/{exec.tasks.length})
+                              </div>
+                              <div className="space-y-1">
+                                {exec.tasks.map((task: any, idx: number) => {
+                                  const title = typeof task === 'object' ? task.title : task;
+                                  const done = typeof task === 'object' ? task.done : true;
+                                  return (
+                                    <div key={idx} className="flex items-center gap-2 text-xs">
+                                      <span className={done ? 'text-green-400' : 'text-yellow-400'}>{done ? '☑' : '☐'}</span>
+                                      <span className={done ? 'text-[#8b949e]' : 'text-white'}>{title}</span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* 失败原因 */}
+                          {exec.status === 'failed' && exec.fail_reason && (
+                            <div className="bg-red-500/10 rounded-lg p-3 border border-red-500/30">
+                              <div className="text-[10px] text-red-400 font-medium mb-1">❌ 失败原因</div>
+                              <p className="text-[11px] text-red-400">{exec.fail_reason}</p>
+                            </div>
+                          )}
+                        </div>
+                      </details>
+                    );
+                  }) : manualExecs.length === 0 ? (
+                    <div className="px-4 py-8 text-center text-[#6e7681] text-sm">
+                      暂无执行记录
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center justify-center h-64 text-[#6e7681] text-sm">
+              ← 选择一个任务查看详情
+            </div>
+          )}
         </div>
       </div>
 
-      {activeTab === 'realtime' ? (
-        renderRealtimeContent()
-      ) : (
-        <>
-          {viewMode === 'board' ? (
-            <>
-              {/* Active Tasks Board */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {columns.map(col => {
-                  const columnTasks = activeTasks.filter(t => t.status === col.key);
-                  return (
-                    <div
-                      key={col.key}
-                      className={`bg-[#0d1117] rounded-xl border-t-4 ${col.color} border border-[#30363d] min-h-[300px]`}
-                    >
-                      <div className="px-4 py-3 border-b border-[#21262d] flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span>{col.emoji}</span>
-                          <span className="font-semibold text-white text-sm">{col.label}</span>
-                        </div>
-                        <span className="bg-[#21262d] text-[#8b949e] text-xs font-medium px-2 py-0.5 rounded-full">
-                          {columnTasks.length}
-                        </span>
-                      </div>
-                      <div className="p-3 space-y-3">
-                        {columnTasks.map(task => renderTaskCard(task))}
-                        {columnTasks.length === 0 && (
-                          <div className="text-center py-8 text-[#6e7681] text-sm">
-                            暂无任务
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Archived (Done) Tasks - Collapsible */}
-              <div className="bg-[#0d1117] rounded-xl border border-[#30363d]">
-                <button
-                  onClick={() => setShowArchived(!showArchived)}
-                  className="w-full px-4 py-3 flex items-center justify-between border-b border-[#21262d] hover:bg-[#161b22] transition-colors rounded-t-xl"
-                >
-                  <div className="flex items-center gap-2">
-                    <span>✅</span>
-                    <span className="font-semibold text-white text-sm">已完成 (归档)</span>
-                    <span className="bg-[#21262d] text-[#8b949e] text-xs font-medium px-2 py-0.5 rounded-full">
-                      {archivedTasks.length}
-                    </span>
-                  </div>
-                  <span className="text-[#484f58] text-sm">{showArchived ? '▲ 收起' : '▼ 展开'}</span>
-                </button>
-                {showArchived && (
-                  <div className="p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {archivedTasks.map(task => renderTaskCard(task))}
-                  </div>
-                )}
-              </div>
-            </>
-          ) : (
-            /* List View */
-            <div className="bg-[#0d1117] rounded-xl border border-[#30363d] overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="text-[#6e7681] border-b border-[#21262d]">
-                      <th className="text-left py-3 px-4 font-medium">任务</th>
-                      <th className="text-left py-3 px-4 font-medium">状态</th>
-                      <th className="text-left py-3 px-4 font-medium">规划者</th>
-                      <th className="text-left py-3 px-4 font-medium">执行者</th>
-                      <th className="text-left py-3 px-4 font-medium">方式</th>
-                      <th className="text-right py-3 px-4 font-medium">Token</th>
-                      <th className="text-left py-3 px-4 font-medium">日期</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {activeTasks.map(task => {
-                      const statusMap: Record<string, { label: string; color: string }> = {
-                        done: { label: '✅ 完成', color: 'text-green-400' },
-                        'in-progress': { label: '🔄 进行中', color: 'text-blue-400' },
-                        planned: { label: '📋 计划', color: 'text-yellow-400' },
-                        blocked: { label: '🚫 阻塞', color: 'text-red-400' },
-                      };
-                      const st = statusMap[task.status];
-                      return (
-                        <tr
-                          key={task.id}
-                          onClick={() => toggleExpand(task.id)}
-                          className="border-b border-[#161b22] hover:bg-[#161b22] cursor-pointer transition-colors"
-                        >
-                          <td className="py-3 px-4">
-                            <span className="text-white font-medium">{task.title}</span>
-                          </td>
-                          <td className="py-3 px-4">
-                            <span className={st.color}>{st.label}</span>
-                          </td>
-                          <td className="py-3 px-4 text-[#8b949e]">{task.planner}</td>
-                          <td className="py-3 px-4 text-[#8b949e]">{task.executor}</td>
-                          <td className="py-3 px-4">
-                            <div className="flex gap-1">
-                              {task.viaClaudeCode && (
-                                <span className="text-[10px] px-1 py-0.5 rounded bg-green-500/10 text-green-400">CC</span>
-                              )}
-                              {task.viaOpenSpec && (
-                                <span className="text-[10px] px-1 py-0.5 rounded bg-cyan-500/10 text-cyan-400">OS</span>
-                              )}
-                              {!task.viaClaudeCode && !task.viaOpenSpec && (
-                                <span className="text-[10px] px-1 py-0.5 rounded bg-purple-500/10 text-purple-400">直接</span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="py-3 px-4 text-right text-[#6e7681]">
-                            {(task.planTokens || task.execTokens)
-                              ? `${formatTokens(task.planTokens || 0)}/${formatTokens(task.execTokens || 0)}`
-                              : '-'}
-                          </td>
-                          <td className="py-3 px-4 text-[#6e7681]">
-                            {new Date(task.createdAt).toLocaleDateString('zh-CN')}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Expanded detail */}
-              {expandedId && activeTasks.find(t => t.id === expandedId) && (
-                <div className="border-t border-[#30363d] p-4 bg-[#161b22]">
-                  {(() => {
-                    const task = activeTasks.find(t => t.id === expandedId);
-                    if (!task) return null;
-                    return (
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                          <h3 className="text-base font-semibold text-white">{task.title}</h3>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setExpandedId(null); }}
-                            className="text-xs text-[#8b949e] hover:text-white bg-[#21262d] border border-[#30363d] px-2 py-1 rounded"
-                          >
-                            ✕ 关闭
-                          </button>
-                        </div>
-                        {task.description && (
-                          <p className="text-sm text-[#8b949e] leading-relaxed">{task.description}</p>
-                        )}
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-                          <div>
-                            <span className="text-[#6e7681]">规划者</span>
-                            <div className="text-white mt-0.5">{task.planner}</div>
-                          </div>
-                          <div>
-                            <span className="text-[#6e7681]">执行者</span>
-                            <div className="text-white mt-0.5">{task.executor}</div>
-                          </div>
-                          <div>
-                            <span className="text-[#6e7681]">模型</span>
-                            <div className="text-white mt-0.5">{task.model}</div>
-                          </div>
-                          <div>
-                            <span className="text-[#6e7681]">Token</span>
-                            <div className="text-white mt-0.5">
-                              {formatTokens(task.planTokens || 0)}/{formatTokens(task.execTokens || 0)}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </div>
-              )}
-
-              {/* Archived section in list view */}
-              <div className="border-t border-[#30363d]">
-                <button
-                  onClick={() => setShowArchived(!showArchived)}
-                  className="w-full px-4 py-3 flex items-center justify-between hover:bg-[#161b22] transition-colors"
-                >
-                  <div className="flex items-center gap-2">
-                    <span>✅</span>
-                    <span className="text-sm text-white font-medium">已完成归档</span>
-                    <span className="bg-[#21262d] text-[#8b949e] text-xs px-2 py-0.5 rounded-full">{archivedTasks.length}</span>
-                  </div>
-                  <span className="text-[#484f58] text-sm">{showArchived ? '▲' : '▼'}</span>
-                </button>
-                {showArchived && (
-                  <table className="w-full text-xs">
-                    <tbody>
-                      {archivedTasks.map(task => (
-                        <tr
-                          key={task.id}
-                          onClick={() => toggleExpand(task.id)}
-                          className="border-b border-[#161b22] hover:bg-[#161b22] cursor-pointer transition-colors opacity-70"
-                        >
-                          <td className="py-3 px-4">
-                            <span className="text-white font-medium">{task.title}</span>
-                          </td>
-                          <td className="py-3 px-4 text-green-400">✅ 完成</td>
-                          <td className="py-3 px-4 text-[#8b949e]">{task.planner}</td>
-                          <td className="py-3 px-4 text-[#8b949e]">{task.executor}</td>
-                          <td className="py-3 px-4">
-                            <div className="flex gap-1">
-                              {task.viaClaudeCode && (
-                                <span className="text-[10px] px-1 py-0.5 rounded bg-green-500/10 text-green-400">CC</span>
-                              )}
-                              {!task.viaClaudeCode && (
-                                <span className="text-[10px] px-1 py-0.5 rounded bg-purple-500/10 text-purple-400">直接</span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="py-3 px-4 text-right text-[#6e7681]">
-                            {formatTokens(task.planTokens || 0)}/{formatTokens(task.execTokens || 0)}
-                          </td>
-                          <td className="py-3 px-4 text-[#6e7681]">
-                            {task.completedAt ? new Date(task.completedAt).toLocaleDateString('zh-CN') : '-'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* View mode toggle for history tab */}
-          <div className="flex justify-end gap-2">
-            <button
-              onClick={() => setViewMode('board')}
-              className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
-                viewMode === 'board'
-                  ? 'bg-purple-500/20 border-purple-500/50 text-purple-400'
-                  : 'bg-[#21262d] border-[#30363d] text-[#8b949e] hover:text-white'
-              }`}
-            >
-              看板
-            </button>
-            <button
-              onClick={() => setViewMode('list')}
-              className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
-                viewMode === 'list'
-                  ? 'bg-purple-500/20 border-purple-500/50 text-purple-400'
-                  : 'bg-[#21262d] border-[#30363d] text-[#8b949e] hover:text-white'
-              }`}
-            >
-              列表
-            </button>
-          </div>
-        </>
-      )}
+      {/* 分派优先级说明 */}
+      <DispatchPriorityCard />
     </div>
   );
 }

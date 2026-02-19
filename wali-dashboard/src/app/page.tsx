@@ -1,16 +1,14 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Card from '@/components/Card';
 import StatusDot from '@/components/StatusDot';
 import DataSourceBadge from '@/components/DataSourceBadge';
 import AgentStatus from '@/components/AgentStatus';
-import TaskQueue from '@/components/TaskQueue';
 import ModelRanking from '@/components/ModelRanking';
 import CostOverview from '@/components/CostOverview';
 import { defaultModels, defaultBrainStatus } from '@/data/models';
-import { defaultTasks } from '@/data/tasks';
-import { fetchStats, StatsData } from '@/lib/api';
+import { fetchStats, connectSSE, StatsData, WaliExecution } from '@/lib/api';
 import { transformModels, transformBrainStatus, getTopModels } from '@/lib/transform';
 import { ModelInfo, BrainStatus } from '@/types';
 import ActiveTasksCard from '@/components/ActiveTasksCard';
@@ -100,9 +98,13 @@ export default function Dashboard() {
   const [isLive, setIsLive] = useState(false);
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(() => Date.now());
+  const [sseFailed, setSseFailed] = useState(false);
+  const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    let cleanup: (() => void) | null = null;
+
     async function load() {
       const data = await fetchStats();
       if (cancelled) return;
@@ -112,9 +114,33 @@ export default function Dashboard() {
       }
       setLoading(false);
     }
+
+    // 优先尝试 SSE
+    const sseToken = 'default'; // 使用默认 token
+    cleanup = connectSSE(sseToken, (data) => {
+      setStats(data);
+      setIsLive(true);
+      setLoading(false);
+    });
+
+    // SSE 失败时降级到轮询
+    setTimeout(() => {
+      if (!isLive && !cancelled) {
+        setSseFailed(true);
+        if (cleanup) cleanup();
+        load();
+        pollingRef.current = setInterval(load, 30_000);
+      }
+    }, 3000);
+
+    // 首次加载
     load();
-    const interval = setInterval(load, 30_000);
-    return () => { cancelled = true; clearInterval(interval); };
+
+    return () => {
+      cancelled = true;
+      if (cleanup) cleanup();
+      if (pollingRef.current) clearInterval(pollingRef.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -171,23 +197,22 @@ export default function Dashboard() {
     ? mergedModels.reduce((sum, m) => sum + (m._callsMonth || 0), 0)
     : 0;
 
-  // Task stats
-  const tasksTotal = defaultTasks.length;
-  const tasksInProgress = defaultTasks.filter(t => t.status === 'in-progress').length;
-  const tasksDone = defaultTasks.filter(t => t.status === 'done').length;
-  const tasksPlanned = defaultTasks.filter(t => t.status === 'planned').length;
-  const tasksBlocked = defaultTasks.filter(t => t.status === 'blocked').length;
+  // 从 wali_status.tasks 获取业务任务
+  const waliTasks = stats?.wali_status?.tasks as any;
+  const tasksTotal = waliTasks?.total || 0;
+  const tasksCompleted = waliTasks?.completed || 0;
+  const tasksActive = waliTasks?.active || 0;
+  const businessTasks = waliTasks?.tasks || [];
 
-  // Model task distribution
-  const modelTaskMap: Record<string, number> = {};
-  defaultTasks.forEach(t => {
-    const taskModels = t.model.split(/[+,]/).map(m => m.trim());
-    taskModels.forEach(m => {
-      const key = m || '未分配';
-      modelTaskMap[key] = (modelTaskMap[key] || 0) + 1;
-    });
-  });
-  const modelTaskEntries = Object.entries(modelTaskMap).sort((a, b) => b[1] - a[1]);
+  // 从 wali_status.executions 获取最近执行记录
+  // 首页只展示有意义的执行记录：最近成功的 + 最新 1 条（无论状态）
+  const allExecs: WaliExecution[] = stats?.wali_status?.executions || [];
+  const latestExec = allExecs[0]; // 最新的一条
+  const successExecs = allExecs.filter(e => e.status === 'success').slice(0, 4);
+  // 合并去重
+  const executions: WaliExecution[] = latestExec && latestExec.status !== 'success'
+    ? [latestExec, ...successExecs].slice(0, 5)
+    : successExecs.slice(0, 5);
 
   const allHealthy = topModels.every(m => m.status === 'healthy');
   const anyDown = topModels.some(m => m.status === 'down');
@@ -238,14 +263,6 @@ export default function Dashboard() {
 
       {/* Stats Overview - 4 cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Task Stats Card */}
-        <Card>
-          <div className="text-[#8b949e] text-xs font-medium uppercase tracking-wider">任务统计</div>
-          <div className="text-3xl font-bold text-white mt-2">{tasksTotal}</div>
-          <div className="text-xs text-[#6e7681] mt-1">
-            ✅ {tasksDone} 完成 · 🔄 {tasksInProgress} 进行中 · 📋 {tasksPlanned} 计划{tasksBlocked > 0 ? ` · 🚫 ${tasksBlocked} 阻塞` : ''}
-          </div>
-        </Card>
         <Card>
           <div className="text-[#8b949e] text-xs font-medium uppercase tracking-wider">
             {isLive ? '今日调用' : '活跃模型'}
@@ -276,95 +293,95 @@ export default function Dashboard() {
           </div>
           <div className={`text-xs mt-2 ${healthColor}`}>全部{healthLabel}</div>
         </Card>
-      </div>
-
-      {/* Task Queue - using new component */}
-      <TaskQueue tasks={defaultTasks} maxItems={6} />
-
-      {/* Task Progress + Model Task Distribution */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Task Progress */}
-        <Card hover={false}>
-          <h2 className="text-lg font-semibold text-white mb-4">📋 任务进度</h2>
-          <div className="space-y-3">
-            {[
-              { label: '已完成', count: tasksDone, total: tasksTotal, color: 'bg-green-500', textColor: 'text-green-400' },
-              { label: '进行中', count: tasksInProgress, total: tasksTotal, color: 'bg-blue-500', textColor: 'text-blue-400' },
-              { label: '计划中', count: tasksPlanned, total: tasksTotal, color: 'bg-yellow-500', textColor: 'text-yellow-400' },
-            ].map(item => (
-              <div key={item.label}>
-                <div className="flex justify-between text-xs mb-1">
-                  <span className="text-[#8b949e]">{item.label}</span>
-                  <span className={`font-medium ${item.textColor}`}>{item.count} / {item.total}</span>
-                </div>
-                <div className="h-2 bg-[#21262d] rounded-full overflow-hidden">
-                  <div
-                    className={`h-2 rounded-full transition-all duration-700 ${item.color}`}
-                    style={{ width: `${(item.count / item.total) * 100}%` }}
-                  />
-                </div>
-              </div>
-            ))}
+        <Card>
+          <div className="text-[#8b949e] text-xs font-medium uppercase tracking-wider">任务进度</div>
+          <div className="text-3xl font-bold text-white mt-2">
+            {tasksTotal > 0 ? `${tasksCompleted}/${tasksTotal}` : '—'}
           </div>
-          <div className="mt-4 pt-3 border-t border-[#21262d] text-xs text-[#6e7681]">
-            完成率: <span className="text-green-400 font-medium">{((tasksDone / tasksTotal) * 100).toFixed(0)}%</span>
-          </div>
-          {/* Recent completed tasks */}
-          <div className="mt-3 pt-3 border-t border-[#21262d]">
-            <h3 className="text-[11px] text-gray-500 uppercase tracking-wider mb-2">近期已完成</h3>
-            <div className="space-y-1.5">
-              {defaultTasks
-                .filter(t => t.status === 'done')
-                .slice(0, 5)
-                .map(t => (
-                  <div key={t.id} className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] text-gray-400 truncate flex-1">✅ {t.title}</span>
-                    <span className="text-[10px] text-gray-500 whitespace-nowrap font-mono">
-                      {t.planTokens || t.execTokens
-                        ? `~${formatTokens((t.planTokens || 0) + (t.execTokens || 0))}`
-                        : '—'
-                      }
-                    </span>
-                  </div>
-                ))}
-            </div>
-            {tasksDone > 5 && (
-              <a href="/tasks" className="text-[10px] text-purple-400 hover:underline mt-1 block">
-                查看全部 {tasksDone} 个 →
-              </a>
-            )}
+          <div className="text-xs text-[#6e7681] mt-1">
+            {stats?.wali_status?.currentTask || '无活跃任务'}
           </div>
         </Card>
+      </div>
 
-        {/* Model Task Distribution */}
+      {/* 任务进度 + 最近执行记录 */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* 任务进度 */}
         <Card hover={false}>
-          <h2 className="text-lg font-semibold text-white mb-4">🤖 模型任务分布</h2>
-          <div className="space-y-2">
-            {modelTaskEntries.map(([model, count]) => {
-              const pct = (count / tasksTotal) * 100;
-              const colorMap: Record<string, string> = {
-                'Claude Opus 4.6': 'bg-purple-500',
-                'GLM-5': 'bg-green-500',
-                'GLM-4-Flash': 'bg-cyan-500',
-                '待定': 'bg-gray-500',
-              };
-              const barColor = Object.entries(colorMap).find(([k]) => model.includes(k))?.[1] || 'bg-blue-500';
-              return (
-                <div key={model}>
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className="text-[#8b949e] truncate max-w-[60%]">{model}</span>
-                    <span className="text-white font-medium">{count} 个任务</span>
-                  </div>
-                  <div className="h-1.5 bg-[#21262d] rounded-full overflow-hidden">
-                    <div
-                      className={`h-1.5 rounded-full transition-all duration-700 ${barColor}`}
-                      style={{ width: `${pct}%` }}
-                    />
-                  </div>
+          <h2 className="text-lg font-semibold text-white mb-4">🎯 当前任务</h2>
+          {(() => {
+            const activeTasks = businessTasks.filter((t: any) => t.status === 'active');
+            if (activeTasks.length === 0) {
+              return <div className="text-center py-8 text-[#6e7681] text-sm">暂无活跃任务</div>;
+            }
+            return (
+              <div className="space-y-3">
+                {activeTasks.map((task: any, idx: number) => {
+                  const execCount = (task.executions || []).length;
+                  return (
+                    <div key={idx} className="bg-[#161b22] rounded-lg border border-[#21262d] p-3">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-sm font-medium text-white">{task.title}</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/15 text-green-400 border border-green-500/30">进行中</span>
+                      </div>
+                      {task.goal && <p className="text-[11px] text-[#6e7681] mb-2">{task.goal}</p>}
+                      <div className="flex items-center gap-3 text-[10px] text-[#484f58]">
+                        {task.source && <span>📎 {task.source}</span>}
+                        {execCount > 0 && <span>⚡ {execCount} 次执行</span>}
+                      </div>
+                    </div>
+                  );
+                })}
+                <div className="text-[10px] text-[#484f58] text-center">
+                  共 {tasksTotal} 个任务 · {tasksCompleted} 已完成
                 </div>
-              );
-            })}
-          </div>
+              </div>
+            );
+          })()}
+        </Card>
+
+        {/* 最近执行记录 */}
+        <Card hover={false}>
+          <h2 className="text-lg font-semibold text-white mb-4">⚡ 最近执行记录</h2>
+          {executions.length > 0 ? (
+            <div className="space-y-2">
+              {executions.map((exec) => {
+                const statusColor = exec.status === 'success' ? 'bg-green-400' :
+                                   exec.status === 'failed' ? 'bg-red-400' : 'bg-yellow-400 animate-pulse';
+                const durationSec = exec.duration_ms ? Math.round(exec.duration_ms / 1000) : 0;
+                const durationStr = durationSec > 60 ? `${Math.floor(durationSec / 60)}分${durationSec % 60}秒` : `${durationSec}秒`;
+                return (
+                  <div key={exec.id} className="flex items-center gap-3 p-2 bg-[#161b22] rounded-lg border border-[#21262d]">
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${statusColor}`} />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs text-white truncate">{exec.task_title || '—'}</div>
+                      <div className="text-[10px] text-[#6e7681] mt-0.5 flex items-center gap-2">
+                        <span className="text-purple-400">{exec.model}</span>
+                        <span>· {durationStr}</span>
+                        {exec.cost > 0 && <span className="text-cyan-400">· ${exec.cost.toFixed(2)}</span>}
+                      </div>
+                      {exec.status === 'failed' && exec.fail_reason && (
+                        <div className="text-[10px] text-red-400 mt-0.5 truncate" title={exec.fail_reason}>
+                          ❌ {exec.fail_reason}
+                        </div>
+                      )}
+                    </div>
+                    <span className={`text-[10px] px-2 py-0.5 rounded border shrink-0 ${
+                      exec.status === 'success' ? 'bg-green-500/15 text-green-400 border-green-500/30' :
+                      exec.status === 'failed' ? 'bg-red-500/15 text-red-400 border-red-500/30' :
+                      'bg-yellow-500/15 text-yellow-400 border-yellow-500/30'
+                    }`}>
+                      {exec.status === 'success' ? '成功' : exec.status === 'failed' ? '失败' : '运行中'}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-center py-8 text-[#6e7681] text-sm">
+              暂无执行记录
+            </div>
+          )}
         </Card>
       </div>
 

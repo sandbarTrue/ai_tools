@@ -62,6 +62,40 @@ export interface WaliStatusData {
   queue: Array<string | WaliQueueItem>;
   lastUpdate: string;
   recentActions: Array<{ time: string; action: string; executor?: string; tokens?: string }>;
+  tasks?: WaliTasksData;
+  executions?: WaliExecution[];
+}
+
+export interface WaliTasksData {
+  total: number;
+  completed: number;
+  phases: WaliPhase[];
+}
+
+export interface WaliPhase {
+  name: string;
+  tasks: WaliTaskItem[];
+}
+
+export interface WaliTaskItem {
+  id: string;
+  title: string;
+  done: boolean;
+}
+
+export interface WaliExecution {
+  id: string;
+  type: 'openspec' | 'direct';
+  model: string;
+  status: 'success' | 'failed' | 'running';
+  cost: number;
+  duration_ms: number;
+  started_at: string;
+  finished_at: string | null;
+  task_title: string;
+  proposal?: string;
+  tasks?: string[];
+  fail_reason?: string | null;
 }
 
 export interface ActiveTask {
@@ -182,4 +216,28 @@ export async function fetchStats(): Promise<StatsData | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * SSE 实时连接
+ * 优先使用 SSE 推送，失败时降级到轮询
+ */
+export function connectSSE(token: string, onData: (data: StatsData) => void): () => void {
+  const es = new EventSource(`https://junaitools.com/ws/?sse=1&token=${token}`);
+
+  es.addEventListener('stats_update', (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      onData(data);
+    } catch {
+      // 解析失败，忽略
+    }
+  });
+
+  es.onerror = () => {
+    // SSE 连接失败，关闭连接（调用方应降级到轮询）
+    es.close();
+  };
+
+  return () => es.close();
 }

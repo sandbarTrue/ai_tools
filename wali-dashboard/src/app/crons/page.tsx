@@ -1,6 +1,9 @@
+'use client';
+
+import { useState, useEffect } from 'react';
 import Card from '@/components/Card';
 import StatusDot from '@/components/StatusDot';
-import { defaultCrons } from '@/data/crons';
+import { CronJob } from '@/types';
 
 function formatDuration(seconds: number): string {
   if (seconds >= 60) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
@@ -11,7 +14,7 @@ function formatSchedule(cron: string): string {
   const parts = cron.split(' ');
   if (parts.length < 5) return cron;
   const [min, hour, dom, mon, dow] = parts;
-  
+
   if (dom === '*' && mon === '*' && dow === '*') {
     if (min.startsWith('*/')) return `每${min.slice(2)}分钟`;
     return `每天 ${hour.padStart(2, '0')}:${min.padStart(2, '0')}`;
@@ -20,15 +23,65 @@ function formatSchedule(cron: string): string {
 }
 
 export default function CronsPage() {
-  const enabledCount = defaultCrons.filter(c => c.enabled).length;
-  const failedCount = defaultCrons.filter(c => c.consecutiveFailures > 0).length;
+  const [crons, setCrons] = useState<CronJob[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchCrons = async () => {
+      try {
+        const response = await fetch('/api/crons');
+        if (!response.ok) {
+          throw new Error('Failed to fetch cron data');
+        }
+        const data = await response.json();
+        setCrons(data);
+        setError(null);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Unknown error');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchCrons();
+    const interval = setInterval(fetchCrons, 30000); // 30 second refresh
+
+    return () => clearInterval(interval);
+  }, []);
+
+  const enabledCount = crons.filter((c) => c.enabled).length;
+  const failedCount = crons.filter((c) => c.consecutiveFailures > 0).length;
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Cron 任务</h1>
+          <p className="text-sm text-[#8b949e] mt-1">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Cron 任务</h1>
+          <p className="text-sm text-red-400 mt-1">Error: {error}</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-white">⏰ Cron 任务</h1>
+        <h1 className="text-2xl font-bold text-white">Cron 任务</h1>
         <p className="text-sm text-[#8b949e] mt-1">
-          共 {defaultCrons.length} 个任务 · {enabledCount} 个启用 · {failedCount > 0 && <span className="text-red-400">{failedCount} 个异常</span>}
+          共 {crons.length} 个任务 · {enabledCount} 个启用 ·{' '}
+          {failedCount > 0 && <span className="text-red-400">{failedCount} 个异常</span>}
         </p>
       </div>
 
@@ -36,7 +89,7 @@ export default function CronsPage() {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <Card>
           <div className="text-xs text-[#8b949e] uppercase tracking-wider">总任务</div>
-          <div className="text-2xl font-bold text-white mt-1">{defaultCrons.length}</div>
+          <div className="text-2xl font-bold text-white mt-1">{crons.length}</div>
         </Card>
         <Card>
           <div className="text-xs text-[#8b949e] uppercase tracking-wider">已启用</div>
@@ -44,7 +97,7 @@ export default function CronsPage() {
         </Card>
         <Card>
           <div className="text-xs text-[#8b949e] uppercase tracking-wider">已禁用</div>
-          <div className="text-2xl font-bold text-gray-400 mt-1">{defaultCrons.length - enabledCount}</div>
+          <div className="text-2xl font-bold text-gray-400 mt-1">{crons.length - enabledCount}</div>
         </Card>
         <Card>
           <div className="text-xs text-[#8b949e] uppercase tracking-wider">异常</div>
@@ -54,7 +107,7 @@ export default function CronsPage() {
 
       {/* Cron List */}
       <div className="space-y-3">
-        {defaultCrons.map(cron => (
+        {crons.map((cron) => (
           <Card key={cron.id} className={`${!cron.enabled ? 'opacity-60' : ''}`}>
             <div className="flex flex-col sm:flex-row sm:items-center gap-4">
               {/* Left: Status + Name */}
@@ -92,41 +145,51 @@ export default function CronsPage() {
                   <div className="text-[#8b949e]">
                     {cron.lastRun
                       ? new Date(cron.lastRun).toLocaleString('zh-CN', {
-                          month: 'numeric', day: 'numeric',
-                          hour: '2-digit', minute: '2-digit',
+                          month: 'numeric',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
                         })
-                      : '-'
-                    }
+                      : '-'}
                   </div>
                 </div>
                 <div>
                   <div className="text-[#6e7681] mb-0.5">状态</div>
-                  <div className={
-                    cron.lastStatus === 'success' ? 'text-green-400' :
-                    cron.lastStatus === 'failed' ? 'text-red-400' :
-                    cron.lastStatus === 'timeout' ? 'text-yellow-400' : 'text-[#8b949e]'
-                  }>
-                    {cron.lastStatus === 'success' ? '✓ 成功' :
-                     cron.lastStatus === 'failed' ? '✕ 失败' :
-                     cron.lastStatus === 'timeout' ? '⏱ 超时' : '-'}
+                  <div
+                    className={
+                      cron.lastStatus === 'success'
+                        ? 'text-green-400'
+                        : cron.lastStatus === 'failed'
+                          ? 'text-red-400'
+                          : cron.lastStatus === 'timeout'
+                            ? 'text-yellow-400'
+                            : 'text-[#8b949e]'
+                    }
+                  >
+                    {cron.lastStatus === 'success'
+                      ? '✓ 成功'
+                      : cron.lastStatus === 'failed'
+                        ? '✕ 失败'
+                        : cron.lastStatus === 'timeout'
+                          ? '⏱ 超时'
+                          : '-'}
                   </div>
                 </div>
                 <div>
                   <div className="text-[#6e7681] mb-0.5">耗时</div>
-                  <div className="text-[#8b949e]">
-                    {cron.lastDuration ? formatDuration(cron.lastDuration) : '-'}
-                  </div>
+                  <div className="text-[#8b949e]">{cron.lastDuration ? formatDuration(cron.lastDuration) : '-'}</div>
                 </div>
                 <div>
                   <div className="text-[#6e7681] mb-0.5">下次运行</div>
                   <div className="text-[#8b949e]">
                     {cron.nextRun !== '-'
                       ? new Date(cron.nextRun).toLocaleString('zh-CN', {
-                          month: 'numeric', day: 'numeric',
-                          hour: '2-digit', minute: '2-digit',
+                          month: 'numeric',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
                         })
-                      : '-'
-                    }
+                      : '-'}
                   </div>
                 </div>
               </div>

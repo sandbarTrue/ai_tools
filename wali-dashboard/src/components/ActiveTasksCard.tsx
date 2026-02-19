@@ -153,20 +153,20 @@ export default function ActiveTasksCard({ stats, isLive }: ActiveTasksCardProps)
           )}
         </div>
 
-        {/* Session 统计 */}
+        {/* 对话统计 */}
         <div className="bg-[#0d1117] rounded-lg p-3 border border-[#21262d]">
           <div className="flex items-center gap-2 mb-2">
             <span className="text-sm">📊</span>
-            <span className="text-xs text-[#8b949e] font-medium">Session 统计</span>
+            <span className="text-xs text-[#8b949e] font-medium">对话统计</span>
           </div>
           {sessions ? (
             <div className="space-y-2">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-[#8b949e]">今日 Session</span>
+                <span className="text-[#8b949e]">今日对话</span>
                 <span className="text-white font-medium text-lg">{sessions.today}</span>
               </div>
               <div className="flex items-center justify-between text-xs">
-                <span className="text-[#8b949e]">累计 Session</span>
+                <span className="text-[#8b949e]">累计对话</span>
                 <span className="text-[#c9d1d9]">{sessions.total}</span>
               </div>
               <div className="h-1.5 bg-[#21262d] rounded-full overflow-hidden mt-2">
