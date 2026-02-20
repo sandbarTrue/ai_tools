@@ -1,8 +1,8 @@
 {
   "/_not-found/page": "app/_not-found/page.js",
   "/api/brain-status/route": "app/api/brain-status/route.js",
-  "/api/models/route": "app/api/models/route.js",
   "/api/crons/route": "app/api/crons/route.js",
+  "/api/models/route": "app/api/models/route.js",
   "/api/subscriptions/route": "app/api/subscriptions/route.js",
   "/api/tasks/route": "app/api/tasks/route.js",
   "/crons/page": "app/crons/page.js",
