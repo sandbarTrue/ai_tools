@@ -80,6 +80,11 @@ function StepsList({ steps }: { steps: ExecutionDetail['steps'] }) {
           <span className={step.state === 'completed' ? 'text-[#8b949e]' : 'text-white'}>
             {step.name}
           </span>
+          {step.files && step.files.length > 0 && (
+            <span className="text-[#484f58] truncate" title={step.files.join(', ')}>
+              [{step.files[0]}{step.files.length > 1 ? ` +${step.files.length - 1}` : ''}]
+            </span>
+          )}
         </div>
       ))}
     </div>
@@ -110,7 +115,7 @@ function ExecutionCard({ exec, defaultOpen = false }: { exec: ExecutionDetail; d
             {exec.model && <span className="text-purple-400">{exec.model}</span>}
             {exec.duration_ms && <span>· {formatDuration(exec.duration_ms)}</span>}
             {exec.cost_usd && exec.cost_usd > 0 && <span className="text-cyan-400">· {formatCost(exec.cost_usd)}</span>}
-            {exec.retry_count > 0 && <span className="text-orange-400">· 重试 {exec.retry_count}</span>}
+            {exec.retry_of && <span className="text-orange-400" title={`重试自 ${exec.retry_of}`}>🔄 重试</span>}
           </div>
         </div>
 
