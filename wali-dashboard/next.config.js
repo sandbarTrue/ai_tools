@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'export',
-  basePath: '/dashboard',
+  basePath: '/dash',
   trailingSlash: true,
   images: {
     unoptimized: true,

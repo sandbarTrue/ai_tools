@@ -7,6 +7,7 @@ import { useState } from 'react';
 const navItems = [
   { href: '/', label: '总览', icon: '📊' },
   { href: '/tasks', label: '任务看板', icon: '📋' },
+  { href: '/verify', label: '验收报告', icon: '📄' },
   { href: '/models', label: '模型监控', icon: '🧠' },
   { href: '/skills', label: 'Skills', icon: '🧩' },
   { href: '/crons', label: 'Cron任务', icon: '⏰' },

@@ -54,33 +54,59 @@ export interface WaliQueueItem {
   planned?: string;
 }
 
-export interface WaliStatusData {
-  currentTask: string;
-  status: 'working' | 'investigating' | 'idle' | 'deploying' | 'blocked';
-  startedAt: string;
-  executor?: string;
-  queue: Array<string | WaliQueueItem>;
-  lastUpdate: string;
-  recentActions: Array<{ time: string; action: string; executor?: string; tokens?: string }>;
-  tasks?: WaliTasksData;
-  executions?: WaliExecution[];
+// ========== L3 Step (步骤) ==========
+export interface ExecutionStep {
+  name: string;
+  state: 'pending' | 'running' | 'completed' | 'failed';
+  status: 'pending' | 'running' | 'success';
+  files?: string[];
+}
+
+// ========== L2 Execution (执行记录) ==========
+export interface ExecutionDetail {
+  id: string;
+  name: string;
+  executor: string;
+  executor_icon: string;
+  model: string | null;
+  state: 'pending' | 'running' | 'completed' | 'failed' | 'done' | 'verified';
+  status: 'pending' | 'running' | 'success' | 'failed';
+  started_at: string | null;
+  finished_at: string | null;
+  duration_ms?: number | null;
+  cost_usd?: number | null;
+  retry_of?: string | null;
+  retry_count: number;
+  error?: string | null;
+  verify_result?: {
+    passed: number;
+    total: number;
+    report?: string;
+  } | null;
+  steps: ExecutionStep[];
+}
+
+// ========== L1 Task (业务任务) ==========
+export interface BusinessTask {
+  id: string;
+  title: string;
+  status: string; // active | done | blocked | paused | cancelled | proposed | pending_approval | verifying | verify_failed | verified
+  source: string;
+  goal: string;
+  executions: string[]; // execution ids
+  executionDetails: ExecutionDetail[]; // L2 details
+  proposal?: string;
+  verify_report?: string | null;
+  created_at?: string;
+  started_at?: string | null;
+  finished_at?: string | null;
 }
 
 export interface WaliTasksData {
   total: number;
   completed: number;
-  phases: WaliPhase[];
-}
-
-export interface WaliPhase {
-  name: string;
-  tasks: WaliTaskItem[];
-}
-
-export interface WaliTaskItem {
-  id: string;
-  title: string;
-  done: boolean;
+  active: number;
+  tasks: BusinessTask[];
 }
 
 export interface WaliExecution {
@@ -93,11 +119,33 @@ export interface WaliExecution {
   started_at: string;
   finished_at: string | null;
   task_title: string;
-  task_id?: string | null; // ID of the business task this execution belongs to
-  matched_task?: string | null; // ID of the matched task (set after association)
+  task_id?: string | null;
+  matched_task?: string | null;
   proposal?: string;
   tasks?: string[];
   fail_reason?: string | null;
+}
+
+export interface WaliStatusData {
+  currentTask: string;
+  status: 'working' | 'investigating' | 'idle' | 'deploying' | 'blocked';
+  startedAt: string;
+  executor?: string;
+  queue: Array<string | WaliQueueItem>;
+  lastUpdate: string;
+  recentActions: Array<{ time: string; action: string; executor?: string; tokens?: string }>;
+  tasks?: WaliTasksData;
+  executions?: WaliExecution[];
+  verify_reports?: VerifyReport[];
+}
+
+export interface VerifyReport {
+  file: string;
+  task_id: string | null;
+  exec_id: string | null;
+  created_at: string;
+  result: 'PASS' | 'FAIL' | 'UNKNOWN';
+  content: string;
 }
 
 export interface ActiveTask {
@@ -122,6 +170,7 @@ export interface StatsData {
   live_sessions?: LiveSession[];
   task_progress?: TaskProgress;
   openspec_history?: OpenSpecHistory[];
+  verify_reports?: VerifyReport[];
 }
 
 export interface OpenSpecHistory {
